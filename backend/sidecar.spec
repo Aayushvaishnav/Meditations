@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 
 datas = collect_data_files("sqlite_vec")  # bundles the vec0 loadable extension
 datas += collect_data_files("fastembed")
+datas += collect_data_files("tzdata")
 
 # several deps (genai_prices, pydantic_ai, ...) read their version or config
 # via importlib.metadata — frozen apps need the dist-info shipped explicitly
@@ -29,6 +30,7 @@ binaries += collect_dynamic_libs("sqlite_vec")
 # entry-point/dynamic imports invisible to static analysis
 hiddenimports = (
     collect_submodules("app")
+    + collect_submodules("tzdata")
     + collect_submodules("uvicorn")
     + collect_submodules("pydantic_ai")
     + [

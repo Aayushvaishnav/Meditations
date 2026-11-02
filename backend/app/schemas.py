@@ -4,10 +4,12 @@ from datetime import date as Date
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import StringConstraints, field_validator
+from pydantic import ConfigDict, StringConstraints, computed_field, field_validator
 from sqlmodel import Field, SQLModel
 
 from app.util import normalize_dt
+from app.task_deadlines import Deadline, DeadlineInput, NoDeadline, deadline_value
+from app.models import TaskFields
 
 TaskStatus = Literal["todo", "in_progress", "completed", "canceled"]
 FocusType = Literal["pomodoro", "stopwatch"]
@@ -36,7 +38,8 @@ class ListUpdate(SQLModel):
 
 
 # --- Tasks ---
-class TaskCreate(SQLModel):
+class TaskCreate(DeadlineInput, SQLModel):
+    deadline: Deadline = Field(default_factory=NoDeadline)
     title: TitleText
     list_id: str | None = None
     parent_id: str | None = None
@@ -54,7 +57,8 @@ class TaskCreate(SQLModel):
         return normalize_dt(v)
 
 
-class TaskUpdate(SQLModel):
+class TaskUpdate(DeadlineInput, SQLModel):
+    deadline: Deadline = Field(default_factory=NoDeadline)
     title: TitleText | None = None
     description: str | None = None
     priority: PriorityInt | None = None
@@ -126,3 +130,12 @@ class AISettingsUpdate(SQLModel):
     fast_model_name: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+
+
+class TaskResponse(TaskFields):
+    model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    @property
+    def deadline(self) -> Deadline:
+        return deadline_value(self.due_date, self.deadline_date)

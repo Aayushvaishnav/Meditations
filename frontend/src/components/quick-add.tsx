@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Badge } from "@/components/ui/badge"
 import { useCreateList, useCreateTask, useLists } from "@/hooks/api"
 import { parseQuickAdd } from "@/lib/parsing"
-import { formatDue, parseUTC } from "@/lib/dates"
+import { formatDeadline } from "@/lib/task-deadlines"
 import { useUi } from "@/stores/ui"
 import { cn } from "cn"
 
@@ -30,7 +30,7 @@ function SyntaxHelp() {
         <ul className="mt-2 space-y-1 text-muted-foreground">
           <li>
             <code className="text-foreground">tomorrow 5pm</code>, <code className="text-foreground">next mon</code>,{" "}
-            <code className="text-foreground">sep 20 3pm</code> — due date
+            <code className="text-foreground">sep 20 3pm</code>: deadline
           </li>
           <li>
             <code className="text-foreground">every mon, wed</code>,{" "}
@@ -93,7 +93,7 @@ function CaptureDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
           <div className="space-y-1 text-xs text-muted-foreground">
             {capture.data.tasks.map((t) => (
               <div key={t.id} className="truncate">
-                + {t.title} {t.due_date ? `· due ${t.due_date.slice(0, 10)}` : ""}
+                + {t.title} {t.deadline.kind !== "none" ? `· due ${formatDeadline(t.deadline)}` : ""}
               </div>
             ))}
           </div>
@@ -113,7 +113,7 @@ export function QuickAdd() {
 
   const parsed = useMemo(() => parseQuickAdd(value), [value])
   const hasExtras =
-    parsed.due_date !== null ||
+    parsed.deadline.kind !== "none" ||
     parsed.priority !== 0 ||
     parsed.tags.length > 0 ||
     parsed.list_name !== null ||
@@ -139,7 +139,7 @@ export function QuickAdd() {
       await createTask.mutateAsync({
         title,
         list_id: listId,
-        due_date: parsed.due_date,
+        deadline: parsed.deadline,
         priority: parsed.priority,
         tags: parsed.tags,
         estimated_minutes: parsed.estimated_minutes,
@@ -150,8 +150,6 @@ export function QuickAdd() {
       // toasts handled in mutation hooks
     }
   }
-
-  const due = parsed.due_date ? parseUTC(parsed.due_date) : null
 
   return (
     <div className="px-6 pt-4">
@@ -190,7 +188,7 @@ export function QuickAdd() {
         <div className="flex flex-wrap items-center gap-1.5 px-2 pt-2 text-xs">
           <ListFilter className="size-3 text-muted-foreground" />
           <span className="max-w-64 truncate font-medium">{parsed.title || "…"}</span>
-          {due && <Badge variant="outline">{formatDue(due)}</Badge>}
+          {parsed.deadline.kind !== "none" && <Badge variant="outline">{formatDeadline(parsed.deadline)}</Badge>}
           {parsed.priority !== 0 && <Badge variant="outline">{PRIORITY_LABELS[parsed.priority]}</Badge>}
           {parsed.list_name && (
             <Badge variant="outline" className="text-primary">

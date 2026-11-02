@@ -7,13 +7,17 @@ const tests = [
   "src/lib/dates.test.ts",
   "src/lib/parsing.test.ts",
   "src/lib/task-filter.test.ts",
+  "src/lib/task-deadlines.test.ts",
+  "src/hooks/use-deadline-passed.test.ts",
+  "src/components/quick-add.test.tsx",
+  "src/components/task-overdue.test.tsx",
   "src/components/calendar-view.test.tsx",
   "src/components/task-sections.test.tsx",
   "src/components/header.test.tsx",
   "src/stores/timer.test.ts",
   "src/components/focus-timer.test.tsx",
 ]
-for (const timezone of ["UTC", "Asia/Kolkata", "America/New_York", "Pacific/Kiritimati"]) {
+for (const timezone of ["UTC", "Asia/Kolkata", "America/New_York", "Pacific/Kiritimati", "America/Sao_Paulo", "Pacific/Apia"]) {
   console.log(`\nTimezone: ${timezone}`)
   const result = spawnSync(process.execPath, [vitest, "run", ...tests], {
     cwd: root,

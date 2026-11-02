@@ -42,12 +42,12 @@ async def collect_daily_metrics(session: AsyncSession, day: date) -> DailyMetric
                 Task.status != "canceled",
                 or_(
                     and_(
-                        Task.due_date.is_not(None),
-                        Task.due_date < end,
+                        or_(Task.due_date < end, Task.deadline_date <= day),
                         or_(Task.completed_at.is_(None), Task.completed_at >= start),
                     ),
                     and_(
                         Task.due_date.is_(None),
+                        Task.deadline_date.is_(None),
                         Task.completed_at >= start,
                         Task.completed_at < end,
                     ),

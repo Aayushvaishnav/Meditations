@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import {
   Bot,
   Check,
@@ -71,19 +71,24 @@ function AISettingsCard() {
   const reset = useResetAISettings()
   const test = useTestAI()
 
-  const [provider, setProvider] = useState("openai_compatible")
-  const [modelName, setModelName] = useState("")
-  const [fastModelName, setFastModelName] = useState("")
-  const [baseUrl, setBaseUrl] = useState("")
-  const [apiKey, setApiKey] = useState("") // never prefilled; empty means "unchanged"
+  const [draft, setDraft] = useState<Partial<{
+    provider: string
+    model_name: string
+    fast_model_name: string
+    base_url: string
+    api_key: string
+  }>>({})
+  const provider = draft.provider ?? ai.data?.provider ?? "openai_compatible"
+  const modelName = draft.model_name ?? ai.data?.model_name ?? ""
+  const fastModelName = draft.fast_model_name ?? ai.data?.fast_model_name ?? ""
+  const baseUrl = draft.base_url ?? ai.data?.base_url ?? ""
+  const apiKey = draft.api_key ?? "" // never prefilled; empty means "unchanged"
 
-  useEffect(() => {
-    if (!ai.data) return
-    setProvider(ai.data.provider)
-    setModelName(ai.data.model_name)
-    setFastModelName(ai.data.fast_model_name ?? "")
-    setBaseUrl(ai.data.base_url ?? "")
-  }, [ai.data])
+  function acceptSettings() {
+    setDraft((current) => Object.fromEntries(
+      Object.entries(current).filter(([key, value]) => value !== draft[key as keyof typeof draft]),
+    ))
+  }
 
   return (
     <Card title="AI provider" icon={Bot}>
@@ -92,7 +97,7 @@ function AISettingsCard() {
           <Field label="Provider">
             <select
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => setDraft({ ...draft, provider: e.target.value })}
               className="h-9 w-full rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm outline-none focus:border-primary/50"
             >
               <option value="openai_compatible">OpenAI-compatible (Ollama, OpenRouter, Groq, OpenAI…)</option>
@@ -100,11 +105,11 @@ function AISettingsCard() {
             </select>
           </Field>
           <Field label="Model name" hint="e.g. llama3.2:3b, gpt-4o-mini, claude-3-5-sonnet-latest, ag/gemini-3.8-flash-high (Antigravity)">
-            <Input value={modelName} onChange={(e) => setModelName(e.target.value)} className="h-9" />
+            <Input value={modelName} onChange={(e) => setDraft({ ...draft, model_name: e.target.value })} className="h-9" />
           </Field>
         </div>
         <Field label="Base URL" hint="Leave empty for the provider default (api.openai.com / api.anthropic.com)">
-          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://localhost:11434/v1" className="h-9" />
+          <Input value={baseUrl} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} placeholder="http://localhost:11434/v1" className="h-9" />
         </Field>
         <Field
           label="API key"
@@ -117,7 +122,7 @@ function AISettingsCard() {
           <Input
             type="password"
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => setDraft({ ...draft, api_key: e.target.value })}
             placeholder={ai.data?.api_key_set ? "•••••••• (unchanged)" : "sk-… or 'ollama' for local"}
             className="h-9"
           />
@@ -134,7 +139,7 @@ function AISettingsCard() {
                 fast_model_name: fastModelName,
                 base_url: baseUrl === "" ? null : baseUrl,
                 ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-              })
+              }, { onSuccess: acceptSettings })
             }
           >
             <Save /> Save
@@ -143,7 +148,7 @@ function AISettingsCard() {
             {test.isPending ? <RefreshCw className="animate-spin" /> : null}
             Test connection
           </Button>
-          <Button variant="ghost" size="sm" disabled={reset.isPending} onClick={() => reset.mutate()}>
+          <Button variant="ghost" size="sm" disabled={reset.isPending} onClick={() => reset.mutate(undefined, { onSuccess: acceptSettings })}>
             <RotateCcw /> Reset to defaults
           </Button>
         </div>
@@ -290,11 +295,8 @@ function UsageCard() {
 function PrefsCard() {
   const prefs = useAppPrefs(true)
   const save = useSaveAppPrefs()
-  const [target, setTarget] = useState("4")
-
-  useEffect(() => {
-    if (prefs.data) setTarget(String(prefs.data.target_deep_work_hours))
-  }, [prefs.data])
+  const [draft, setDraft] = useState<{ kind: "unedited" } | { kind: "edited"; value: string }>({ kind: "unedited" })
+  const target = draft.kind === "unedited" ? String(prefs.data?.target_deep_work_hours ?? 4) : draft.value
 
   return (
     <Card title="Preferences" icon={Gauge}>
@@ -305,10 +307,16 @@ function PrefsCard() {
           max="16"
           step="0.5"
           value={target}
-          onChange={(e) => setTarget(e.target.value)}
+          onChange={(e) => setDraft({ kind: "edited", value: e.target.value })}
           onBlur={() => {
             const n = Number.parseFloat(target)
-            if (!Number.isNaN(n) && n > 0 && n <= 16) save.mutate({ target_deep_work_hours: n })
+            if (!Number.isNaN(n) && n > 0 && n <= 16) {
+              save.mutate({ target_deep_work_hours: n }, {
+                onSuccess: () => setDraft((current) => current === draft
+                  ? { kind: "unedited" }
+                  : current),
+              })
+            }
           }}
           className="h-9 w-28"
         />

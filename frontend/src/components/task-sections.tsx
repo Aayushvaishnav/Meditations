@@ -34,7 +34,7 @@ export function TaskSections({
 
     const grouped = new Map<TaskGroup, Task[]>()
     for (const t of visible) {
-      // top-level only in sections; children render nested under their parent
+      // top-level only in sections; subtasks render nested under their parent
       if (t.parent_id !== null && byId.has(t.parent_id)) continue
       const g = groupOf(t)
       const bucket = grouped.get(g) ?? []
@@ -107,7 +107,7 @@ export function TaskSections({
               >
                 <TaskItem
                   task={task}
-                  children={visible.filter((t) => t.parent_id === task.id)}
+                  subtasks={visible.filter((t) => t.parent_id === task.id)}
                   lists={listBadges}
                   showList={scope.kind === "smart" && (scope.id === "all" || scope.id === "today")}
                 />

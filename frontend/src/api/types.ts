@@ -1,6 +1,11 @@
 export type TaskStatus = "todo" | "in_progress" | "completed" | "canceled"
 export type Priority = 0 | 1 | 2 | 3 // 0 none, 1 low (!3), 2 med (!2), 3 high (!1)
 
+export type TaskDeadline =
+  | { kind: "none" }
+  | { kind: "date"; date: string } // calendar date; never a UTC instant
+  | { kind: "timed"; at: string } // naive UTC ISO from the backend
+
 export interface Task {
   id: string
   list_id: string | null
@@ -9,7 +14,8 @@ export interface Task {
   description: string | null
   priority: Priority
   status: TaskStatus
-  due_date: string | null // naive UTC ISO from the backend
+  deadline: TaskDeadline
+  due_date: string | null // legacy timed-deadline projection; null for date-only/none
   estimated_minutes: number | null
   actual_minutes: number
   recurrence_rule: string | null
@@ -38,7 +44,8 @@ export interface TaskInput {
   description?: string | null
   priority?: Priority
   status?: TaskStatus
-  due_date?: string | null
+  deadline?: TaskDeadline
+  due_date?: string | null // compatibility input; do not combine with deadline
   estimated_minutes?: number | null
   recurrence_rule?: string | null
   tags?: string[]

@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-ai>=1.0.0",
     "sqlite-vec>=0.1.9",
     "fastembed>=0.8.0",
+    "tzdata>=2026.6",
 ]
 
 [dependency-groups]

@@ -22,6 +22,7 @@ from app.routers import (
     scores,
     search,
     tasks,
+    time_blocks,
 )
 
 
@@ -66,6 +67,7 @@ for router in (
     data_export.router,
     lists.router,
     tasks.router,
+    time_blocks.router,
     focus.router,
     habits.router,
     journal.router,

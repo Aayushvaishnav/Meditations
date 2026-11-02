@@ -1,3 +1,4 @@
+import { deadlineFromLegacy } from "./task-deadlines"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { Task } from "@/api/types"
 import {
@@ -12,7 +13,7 @@ function task(overrides: Partial<Task> = {}): Task {
     actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null,
     recurrence_occurrence: null, tags: [], order_index: 0, completed_at: null,
     created_at: "2026-01-01T00:00:00", updated_at: "2026-01-01T00:00:00",
-    ...overrides,
+    deadline: deadlineFromLegacy(overrides.due_date ?? null), ...overrides,
   }
 }
 

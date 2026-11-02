@@ -20,8 +20,9 @@ import { SearchX } from "lucide-react"
 import { matchTaskSearch } from "@/lib/search"
 import { useUi } from "@/stores/ui"
 import type { Task, TaskStatus } from "@/api/types"
-import { formatDue, parseUTC } from "@/lib/dates"
+import { deadlineCutoff, formatDeadline } from "@/lib/task-deadlines"
 import { useUpdateTask } from "@/hooks/api"
+import { useDeadlinePassed } from "@/hooks/use-deadline-passed"
 import { cn } from "cn"
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
@@ -39,8 +40,7 @@ function byOrder(a: Task, b: Task): number {
 
 function TaskCard({ task, dragging = false }: { task: Task; dragging?: boolean }) {
   const done = task.status === "completed"
-  const due = parseUTC(task.due_date)
-  const overdue = !done && due !== null && due.getTime() < Date.now()
+  const overdue = useDeadlinePassed(done ? null : deadlineCutoff(task.deadline))
   return (
     <div
       className={cn(
@@ -57,9 +57,9 @@ function TaskCard({ task, dragging = false }: { task: Task; dragging?: boolean }
           <p className={cn("leading-snug", done && "line-through opacity-70")}>{task.title}</p>
           <div className="mt-1 flex flex-wrap gap-1">
             <PriorityBadge priority={task.priority} showIcon={false} />
-            {due && (
+            {task.deadline.kind !== "none" && (
               <Badge variant="outline" className={cn("gap-1", overdue ? "text-overdue" : "text-muted-foreground")}>
-                {formatDue(due)}
+                {formatDeadline(task.deadline)}
               </Badge>
             )}
             {task.tags.map((t) => (

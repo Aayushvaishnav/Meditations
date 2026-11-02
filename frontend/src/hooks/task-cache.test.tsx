@@ -5,6 +5,7 @@ import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { api } from "@/api/client"
 import type { Task } from "@/api/types"
+import { deadlineFromLegacy } from "@/lib/task-deadlines"
 import { qk, useCreateTask, useUpdateTask, useDeleteTask, useDeleteList, useCreateSession, useTasks } from "./api"
 
 vi.mock("@/api/client", () => ({ api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }, ApiError: class extends Error {} }))
@@ -17,7 +18,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 function task(id: string, patch: Partial<Task> = {}): Task {
-  return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: null,
+  return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: null, deadline: deadlineFromLegacy(patch.due_date ?? null),
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null,
     tags: [], order_index: 0, completed_at: null, created_at: "2026-10-01T00:00:00", updated_at: "2026-10-01T00:00:00", ...patch }
 }
@@ -250,5 +251,47 @@ describe("task mutation concurrency", () => {
     expect(rows()[0].title).toBe("pending")
     await finish(() => update.reject(new Error("rejected")), pending)
     expect(rows()[0].title).toBe("a")
+  })
+})
+
+describe("optimistic deadline projections", () => {
+  it("rolls back date-only edits together with the legacy timed projection", async () => {
+    const original = task("a", { due_date: "2026-11-02T09:00:00" })
+    client.setQueryData(qk.tasks, [original])
+    const response = deferred<Task>()
+    vi.mocked(api.patch).mockReturnValue(response.promise)
+    const { result } = hooks()
+    const pending = await start(() => result.current.update.mutateAsync({ id: "a", patch: { deadline: { kind: "date", date: "2026-11-03" } } }))
+    expect(rows()[0]).toMatchObject({ due_date: null, deadline: { kind: "date", date: "2026-11-03" } })
+    await finish(() => response.reject(new Error("save failed")), pending)
+    expect(rows()).toEqual([original])
+  })
+
+  it("preserves a newer successful deadline when an older overlapping edit fails", async () => {
+    const first = deferred<Task>(), second = deferred<Task>()
+    vi.mocked(api.patch).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { result } = hooks()
+    const older = await start(() => result.current.update.mutateAsync({ id: "a", patch: { deadline: { kind: "date", date: "2026-11-03" } } }))
+    const newer = await start(() => result.current.update.mutateAsync({ id: "a", patch: { deadline: { kind: "timed", at: "2026-11-04T09:00:00Z" } } }))
+    const saved = task("a", { due_date: "2026-11-04T09:00:00Z" })
+    await finish(() => second.resolve(saved), newer)
+    await finish(() => first.reject(new Error("save failed")), older)
+    expect(rows()[0]).toMatchObject({ due_date: saved.due_date, deadline: saved.deadline })
+  })
+
+  it("keeps legacy clearing and date-only creation explicit in the canonical cache", async () => {
+    client.setQueryData(qk.tasks, [task("a", { deadline: { kind: "date", date: "2026-11-03" } })])
+    const clear = deferred<Task>(), create = deferred<Task>()
+    vi.mocked(api.patch).mockReturnValue(clear.promise)
+    vi.mocked(api.post).mockReturnValue(create.promise)
+    const { result } = hooks()
+    const clearing = await start(() => result.current.update.mutateAsync({ id: "a", patch: { due_date: null } }))
+    expect(rows()[0]).toMatchObject({ due_date: null, deadline: { kind: "none" } })
+    const creating = await start(() => result.current.create.mutateAsync({ title: "New", deadline: { kind: "date", date: "2026-11-05" } }))
+    expect(rows().find(row => row.title === "New")).toMatchObject({ due_date: null, deadline: { kind: "date", date: "2026-11-05" } })
+    const saved = task("created", { title: "New", deadline: { kind: "date", date: "2026-11-05" } })
+    await finish(() => create.resolve(saved), creating)
+    await finish(() => clear.resolve(task("a")), clearing)
+    expect(rows()).toEqual([task("a"), saved])
   })
 })

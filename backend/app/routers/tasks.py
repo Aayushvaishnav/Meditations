@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date as Date, datetime
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from sqlmodel import func, select
 
 from app.models import Task, TaskList
 from app.recurring_tasks import ensure_recurrence_identity, spawn_successor
 from app.routers.deps import SessionDep
-from app.schemas import TaskCreate, TaskReorder, TaskStatus, TaskUpdate
+from app.schemas import TaskCreate, TaskReorder, TaskStatus, TaskUpdate, TaskResponse
+from app.task_deadlines import persistence_fields
 from app.util import normalize_dt, utc_now
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -52,7 +53,7 @@ async def _ensure_no_cycle(session: SessionDep, task_id: str, new_parent_id: str
         cursor = parent.parent_id if parent else None
 
 
-@router.get("", response_model=list[Task])
+@router.get("", response_model=list[TaskResponse])
 async def list_tasks(
     session: SessionDep,
     list_id: str | None = None,
@@ -63,6 +64,7 @@ async def list_tasks(
     due_before: datetime | None = None,
     due_after: datetime | None = None,
     overdue: bool = False,
+    as_of_date: Date | None = None,
 ):
     q = select(Task)
     if list_id is not None:
@@ -80,23 +82,23 @@ async def list_tasks(
     if due_after is not None:
         q = q.where(Task.due_date.is_not(None), Task.due_date >= normalize_dt(due_after))
     if overdue:
+        now = utc_now()
         q = q.where(
-            Task.due_date.is_not(None),
-            Task.due_date < utc_now(),
+            or_(Task.due_date < now, Task.deadline_date < (as_of_date or now.date())),
             Task.status.in_(["todo", "in_progress"]),
         )
     q = q.order_by(Task.order_index, Task.created_at)
     return (await session.exec(q)).all()
 
 
-@router.post("", response_model=Task, status_code=201)
+@router.post("", response_model=TaskResponse, status_code=201)
 async def create_task(payload: TaskCreate, session: SessionDep):
     if payload.list_id is not None and await session.get(TaskList, payload.list_id) is None:
         raise HTTPException(status_code=404, detail="List not found")
     if payload.parent_id is not None and await session.get(Task, payload.parent_id) is None:
         raise HTTPException(status_code=404, detail="Parent task not found")
 
-    data = payload.model_dump()
+    data = persistence_fields(payload.model_dump(exclude_unset=True))
     data["order_index"] = await _next_order_index(session, payload.list_id, payload.parent_id)
     task = Task(**data)
     ensure_recurrence_identity(task)
@@ -106,22 +108,22 @@ async def create_task(payload: TaskCreate, session: SessionDep):
     return task
 
 
-@router.get("/{task_id}", response_model=Task)
+@router.get("/{task_id}", response_model=TaskResponse)
 async def get_task(task_id: str, session: SessionDep):
     return await _get_task_or_404(session, task_id)
 
 
-@router.get("/{task_id}/children", response_model=list[Task])
+@router.get("/{task_id}/children", response_model=list[TaskResponse])
 async def get_task_children(task_id: str, session: SessionDep):
     await _get_task_or_404(session, task_id)
     q = select(Task).where(Task.parent_id == task_id).order_by(Task.order_index, Task.created_at)
     return (await session.exec(q)).all()
 
 
-@router.patch("/{task_id}", response_model=Task)
+@router.patch("/{task_id}", response_model=TaskResponse)
 async def update_task(task_id: str, payload: TaskUpdate, session: SessionDep):
     task = await _get_task_or_404(session, task_id)
-    changes = payload.model_dump(exclude_unset=True)
+    changes = persistence_fields(payload.model_dump(exclude_unset=True))
 
     if changes.get("list_id") is not None and await session.get(TaskList, changes["list_id"]) is None:
         raise HTTPException(status_code=404, detail="List not found")
@@ -158,7 +160,7 @@ async def delete_task(task_id: str, session: SessionDep):
     await session.commit()
 
 
-@router.post("/reorder", response_model=list[Task])
+@router.post("/reorder", response_model=list[TaskResponse])
 async def reorder_tasks(payload: TaskReorder, session: SessionDep):
     tasks: list[Task] = []
     for index, task_id in enumerate(payload.ordered_ids):

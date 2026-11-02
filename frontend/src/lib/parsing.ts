@@ -1,9 +1,10 @@
 import { en } from "chrono-node"
-import type { Priority } from "@/api/types"
+import { localDayParam } from "./task-deadlines"
+import type { TaskDeadline, Priority } from "@/api/types"
 
 export interface ParsedQuickAdd {
   title: string
-  due_date: string | null // ISO with offset
+  deadline: TaskDeadline
   priority: Priority
   tags: string[]
   list_name: string | null
@@ -67,22 +68,22 @@ function drop(text: string, match: RegExpExecArray): string {
   return text.slice(0, match.index) + text.slice(match.index + match[0].length)
 }
 
-function parseDue(text: string): { due: string | null; rest: string } {
+function parseDue(text: string): { deadline: TaskDeadline; rest: string } {
   const matches = en.parse(text, new Date(), { forwardDate: true })
-  if (matches.length === 0) return { due: null, rest: text }
+  if (matches.length === 0) return { deadline: { kind: "none" }, rest: text }
   const result = matches[0]
   const date = new Date(result.date()) // chrono 2.x: date is a method
-  if (!result.start.isCertain("hour")) date.setHours(9, 0, 0, 0)
+  const timed = result.start.isCertain("hour")
 
   // chrono keeps past bare-times and past weekdays even with forwardDate;
   // roll forward unless the user anchored an explicit calendar date.
   const anchored = result.start.isCertain("day") || result.start.isCertain("month")
-  if (!anchored && date.getTime() < Date.now()) {
+  if (timed && !anchored && date.getTime() < Date.now()) {
     date.setDate(date.getDate() + (result.start.isCertain("weekday") ? 7 : 1))
   }
 
   const rest = text.slice(0, result.index) + text.slice(result.index + result.text.length)
-  return { due: date.toISOString(), rest }
+  return { deadline: timed ? { kind: "timed", at: date.toISOString() } : { kind: "date", date: localDayParam(date) }, rest }
 }
 
 /**
@@ -123,14 +124,14 @@ export function parseQuickAdd(input: string): ParsedQuickAdd {
   const { rule, rest: r2 } = parseRecurrence(rest)
   rest = r2
 
-  const { due, rest: r3 } = parseDue(rest)
+  const { deadline, rest: r3 } = parseDue(rest)
   rest = r3
 
   const title = rest.replace(/\s{2,}/g, " ").trim()
 
   return {
     title: title || input.trim(),
-    due_date: due,
+    deadline,
     priority,
     tags,
     list_name,
