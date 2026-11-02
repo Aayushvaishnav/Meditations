@@ -30,6 +30,78 @@ uv run pytest
 - **`tasks.actual_minutes`** is maintained by the focus-session routes (added on create, subtracted on delete) and can also be set manually via task PATCH.
 - **Subtasks are tasks** with `parent_id`; deletion cascades via SQLite FKs (`PRAGMA foreign_keys=ON` per connection, `journal_mode=WAL` on the file DB).
 
+## Task-linked time blocks
+
+Timed and all-day work plans use a separate API from task deadlines and recorded
+focus. All intervals use an inclusive start and exclusive end. Create a task first,
+then POST one of these shapes to `/api/time-blocks`:
+
+```json
+{"task_id":"<task-id>","kind":"timed","start_at":"2026-11-02T09:00:00Z","end_at":"2026-11-02T10:30:00Z","timezone":"Asia/Kolkata"}
+```
+
+Timed inputs are absolute instants: naive values mean UTC, and aware values are
+converted to UTC. The separately stored IANA timezone identifies the intended
+local display zone instead of changing the meaning of `start_at`/`end_at`.
+Omitting `kind` retains the earlier timed contract; `timezone` defaults to `UTC`.
+
+For local clock scheduling, use `kind:local` and local endpoints:
+
+```json
+{"task_id":"<task-id>","kind":"local","start_local":"2026-11-02T09:00:00","end_local":"2026-11-02T10:30:00","timezone":"America/New_York"}
+```
+
+A local input resolves through its required IANA zone and returns a canonical
+`timed` block with naive-UTC instants and the zone name. Nonexistent local times
+are rejected instead of moved forward. Repeated times require an explicit matching
+offset, for example `2026-11-01T01:30:00-04:00` or `-05:00` in New York. An incorrect
+offset is rejected even outside DST overlaps. Numeric epochs and date-only datetime
+inputs are refused. The locked PSF `tzdata` fallback is bundled for systems without
+host timezone data. Names are validated against the bundled IANA registry, retaining
+supported aliases while rejecting host-only `posix/`, `right/`, and `posixrules` keys.
+
+All-day blocks keep date labels without conversion or midnight timestamps:
+
+```json
+{"task_id":"<task-id>","kind":"all_day","start_date":"2026-11-02","end_date":"2026-11-03"}
+```
+
+This example covers November 2 only. Dates require `YYYY-MM-DD`; timezone and
+instant fields are inapplicable. Responses contain `kind`, all interval fields,
+and metadata; inapplicable fields are null. Mixed shape properties, even nulls,
+are rejected on writes.
+
+POST returns 201 with a stable ID. GET `/{id}` reads it; PUT `/{id}` replaces the
+entire input shape and can switch kinds while preserving ID/creation time. DELETE
+removes it (204). Missing blocks or tasks return 404; malformed shapes, zones,
+nonpositive intervals, DST ambiguity/gaps, and range overflow return 422.
+
+Collection filters are optional: `task_id`, `kind=timed|all_day`, `start`/`end`
+for timed instant overlap, or `start_date`/`end_date` for all-day date overlap.
+Endpoints exactly touching a query boundary are excluded. A single bound is
+valid; paired bounds must increase. Combining date and instant ranges or a range
+incompatible with `kind` returns 422. Instant queries exclude all-day blocks
+instead of inventing a timezone for them. Without ranges both kinds appear,
+ordered by kind (all-day first), start date/instant, then ID.
+
+Multiple and overlapping blocks are allowed. Block changes leave deadlines,
+status, focus history, and scores unchanged. Task completion/cancellation preserves
+blocks; recurring task successors receive none. Deleting a task deletes its blocks,
+including blocks owned by deleted subtasks.
+
+SQLite backup/restore and portable export v1 preserve block IDs, task references,
+IANA metadata, precise UTC timestamps, and all-day date labels. The export's
+`time_blocks` collection uses canonical timed/all-day fields. Consumers should
+ignore unknown collections and fields. Migration v7 preserves all existing timed
+values and marks their zone `UTC`; it infers neither original local zones nor
+all-day intent.
+
+The UI calendar still edits deadlines; work-block UI and calendar export remain
+later backlog items. Future calendar recurrence must keep the anchor's local clock
+in its stored IANA zone and resolve each date separately, with explicit resolution
+of gaps/folds, instead of adding fixed UTC days. Recurrence expansion and occurrence
+exceptions remain SCHED-04; existing completion-triggered task recurrence is unchanged.
+
 ## Scoring (plan §3.4)
 
 Deterministic, computed from live telemetry (`/api/scores/daily/{date}`):
@@ -73,6 +145,7 @@ the recalculated live value.
 - `GET /api/health`
 - `/api/lists` — CRUD
 - `/api/tasks` — CRUD + filters (`list_id`, `parent_id`, `top_level`, `status`, `tag`, `due_before/after`, `overdue`), `GET /{id}/children`, `POST /reorder`
+- `/api/time-blocks` — task-linked timed blocks: list/create, `GET/PUT/DELETE /{id}`; list filters `task_id`, `start`, `end`
 - `/api/focus` — `sessions` (list/create/delete, filters `task_id`, `on_date`), `summary?on_date=`
 - `/api/habits` — CRUD, `GET /logs` (by day or range), `PUT /{id}/logs` upsert
 - `/api/scores/daily/{date}`
@@ -225,8 +298,8 @@ Unlike full SQLite backups, portable exports omit the entire `app_settings`
 table, AI usage, review jobs, and derived search data. User-authored text is
 preserved verbatim, including any sensitive information it contains.
 
-`app/data_export.py` defines explicit column allowlists for nine collections:
-`lists`, `tasks`, `focus_sessions`, `habits`, `habit_logs`, `journal_entries`,
+`app/data_export.py` defines explicit column allowlists for ten collections:
+`lists`, `tasks`, `time_blocks`, `focus_sessions`, `habits`, `habit_logs`, `journal_entries`,
 `daily_scores`, `weekly_summaries`, and `monthly_summaries`. New database columns
 are opt-in to the export format. One connection executes an explicit SQLite
 `BEGIN` before its first SELECT; every collection is materialized in primary-key
@@ -248,9 +321,11 @@ seconds and gain explicit UTC `Z`; dates and month keys retain their stored
 labels. Optional nulls remain null; tags remain arrays and flags remain booleans.
 Journal content is in Markdown instead of duplicated in JSON. Rating-only
 entries have empty files. Review rubric JSON remains a stored string, and
-historical scores and journal metrics remain saved snapshots. Current `due_date`
-values, including synthetic 09:00 local fallbacks, are exported without inferring
-all-day intent or adding separate scheduling concepts.
+historical scores and journal metrics remain saved snapshots. Timed `due_date`
+values, including legacy synthetic 09:00 local fallbacks, are exported unchanged.
+The additive v1 `deadline_date` field preserves date-only labels without UTC
+conversion. The two fields are mutually exclusive; neither creates a work block.
+Consumers should ignore unknown fields when reading v1 archives.
 
 The route owns a private temporary directory and removes it after delivery,
 serialization/response failure, or cancellation. No SQLite snapshot is included
@@ -261,9 +336,13 @@ no import endpoint. Regression tests use in-memory fixtures except the isolated
 ## Schema upgrades and recurring tasks
 
 Schema upgrades run automatically before the API starts. Fresh and existing
-unversioned databases reach schema v4 through the same versioned migrations.
+unversioned databases reach schema v7 through the same versioned migrations.
 Version 3 tracks pending and ready search vectors for recovery after offline
-embedding or extension failures.
+embedding or extension failures. Version 5 adds date-only task deadlines without
+rewriting legacy due instants; a CHECK prevents conflicting date/timed values.
+Version 6 adds task-owned timed work blocks without deriving any from deadlines.
+Version 7 adds IANA timezone metadata and all-day intervals, retaining legacy
+instants as timed UTC blocks without shifting them.
 A failed upgrade leaves the pending changes rolled back and reports the cause;
 resolve it and restart the backend. Opening a database written by a newer app
 requires upgrading the app.
@@ -328,3 +407,28 @@ and completed again. Supported rules remain DAILY/WEEKLY, INTERVAL, and BYDAY.
 - Recurrence supports DAILY/WEEKLY rules only; unsupported rules are stored without generating successors.
 - Journal routes (TipTap content, mood/energy) are Phase 3; the tables already exist.
 - `daily_scores`/`weekly_summaries`/`monthly_summaries` are written by the Phase 4 agents; scoring is live-computed until then.
+
+### Typed task deadlines (schema v5)
+
+Task responses expose `deadline`: `{"kind":"none"}`, `{"kind":"date","date":"YYYY-MM-DD"}`,
+or `{"kind":"timed","at":"ISO datetime"}`. Create/PATCH accepts the same non-null
+object; clear explicitly with `kind: none`. Unknown union fields, raw
+`deadline_date` writes, and simultaneous `deadline`/`due_date` writes return 422.
+Legacy `due_date` writes remain a timed alias; null clears. Timed values normalize
+to naive UTC. `deadline_date` is a nullable indexed DATE, mutually exclusive with
+`due_date`; migration v5 leaves every legacy instant (including 09:00) unchanged.
+No work blocks are created.
+
+Date-only deadlines are calendar labels, not midnight instants. Daily telemetry
+compares them to the requested UTC day label. Overdue uses `deadline_date < UTC
+today` by default; callers may pass `as_of_date=YYYY-MM-DD` for their local today.
+Timed overdue remains strict instant comparison. `due_before`/`due_after` filter
+only timed deadlines. Clients should treat date-only tasks as overdue after the
+end of their local deadline day.
+
+Recurrence preserves date-only versus timed kind; midnight is used only for
+calendar arithmetic on date-only recurrence. Undated recurring tasks retain the
+existing completion-derived timed successor behavior. Capture without a time
+creates a date-only deadline; explicit times retain server-local interpretation.
+Export format v1 adds nullable `tasks.deadline_date` compatibly; credentials remain
+excluded and calendar labels are exported unchanged.

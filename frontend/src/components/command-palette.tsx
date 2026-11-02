@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useLists, useTasks } from "@/hooks/api"
 import { THEMES, useUi, type Section, type SmartView } from "@/stores/ui"
 import { useFocusTimer } from "@/stores/timer"
-import { formatDue, parseUTC } from "@/lib/dates"
+import { formatDeadline } from "@/lib/task-deadlines"
 import { cn } from "cn"
 
 type Command = {
@@ -240,7 +240,7 @@ function PaletteBody() {
       label: t.title,
       group: "Tasks",
       icon: <Search className="size-4" />,
-      hint: t.due_date ? formatDue(parseUTC(t.due_date)!) : undefined,
+      hint: t.deadline.kind === "none" ? undefined : formatDeadline(t.deadline),
       run: () => {
         const ui = useUi.getState()
         ui.setSection("tasks")

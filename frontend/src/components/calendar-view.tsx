@@ -14,19 +14,15 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { useCreateTask, useUpdateTask } from "@/hooks/api"
-import { formatDuration, parseUTC, toISO } from "@/lib/dates"
+import { formatDuration, sortTasks } from "@/lib/dates"
+import { deadlineCalendarDate, deadlineCutoff, deadlineDayKey, localDayParam, moveDeadline } from "@/lib/task-deadlines"
 import type { Task } from "@/api/types"
 import type { Scope } from "@/stores/ui"
 import { selectScopedTasks } from "@/lib/task-filter"
+import { useDeadlinePassed } from "@/hooks/use-deadline-passed"
 import { cn } from "cn"
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-
-function localDayParam(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  return `${d.getFullYear()}-${m}-${day}`
-}
 
 const PRIORITY_DOT: Record<number, string> = {
   3: "bg-high",
@@ -40,8 +36,8 @@ function TaskChip({ task }: { task: Task }) {
     id: task.id,
     data: { type: "calendar-task" },
   })
-  const due = parseUTC(task.due_date)!
-  const overdue = task.status !== "completed" && due.getTime() < Date.now()
+  const due = deadlineCalendarDate(task.deadline)
+  const overdue = useDeadlinePassed(task.status === "completed" ? null : deadlineCutoff(task.deadline))
   return (
     <button
       ref={setNodeRef}
@@ -55,7 +51,7 @@ function TaskChip({ task }: { task: Task }) {
     >
       <span className={cn("size-1.5 shrink-0 rounded-full", PRIORITY_DOT[task.priority])} />
       <span className="truncate">{task.title}</span>
-      {due.getHours() !== 9 && (
+      {task.deadline.kind === "timed" && due && (
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
           {due.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
         </span>
@@ -140,15 +136,14 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
     gridStart.setDate(first.getDate() - ((first.getDay() + 6) % 7)) // back to Monday
     const byDay = new Map<string, Task[]>()
     for (const t of tasks) {
-      const due = parseUTC(t.due_date)
-      if (!due) continue
-      const key = localDayParam(due)
+      const key = deadlineDayKey(t.deadline)
+      if (!key) continue
       const bucket = byDay.get(key) ?? []
       bucket.push(t)
       byDay.set(key, bucket)
     }
     for (const bucket of byDay.values()) {
-      bucket.sort((a, b) => (parseUTC(a.due_date)!.getTime() ?? 0) - (parseUTC(b.due_date)!.getTime() ?? 0))
+      bucket.sort(sortTasks)
     }
     return Array.from({ length: 6 }, (_, w) =>
       Array.from({ length: 7 }, (_, d) => {
@@ -167,17 +162,16 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
     const overData = event.over?.data.current as { type?: string; date?: Date } | undefined
     const task = tasks.find((t) => t.id === event.active.id)
     if (!overData || overData.type !== "day" || !overData.date || !task) return
-    const due = parseUTC(task.due_date)
-    if (!due) return
+    const sourceDay = deadlineDayKey(task.deadline)
+    if (sourceDay === null) return
     const target = overData.date
-    if (localDayParam(due) === localDayParam(target)) return
-    const next = new Date(target.getFullYear(), target.getMonth(), target.getDate(), due.getHours(), due.getMinutes(), due.getSeconds(), due.getMilliseconds())
-    updateTask.mutate({ id: task.id, patch: { due_date: toISO(next) } })
+    if (sourceDay === localDayParam(target)) return
+    updateTask.mutate({ id: task.id, patch: { deadline: moveDeadline(task.deadline, target) } })
   }
 
   function addOnDay() {
     if (!openDay || !newTitle.trim()) return
-    createTask.mutate({ title: newTitle.trim(), list_id: scope.kind === "list" ? scope.id : null, due_date: toISO(new Date(openDay.getFullYear(), openDay.getMonth(), openDay.getDate(), 9, 0)) })
+    createTask.mutate({ title: newTitle.trim(), list_id: scope.kind === "list" ? scope.id : null, deadline: { kind: "date", date: localDayParam(openDay) } })
     setNewTitle("")
   }
 
@@ -196,7 +190,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
         <Button variant="ghost" size="icon-xs" onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} aria-label="Next month">
           <ChevronRight />
         </Button>
-        <span className="ml-auto text-xs text-muted-foreground">Drag tasks between days to reschedule</span>
+        <span className="ml-auto text-xs text-muted-foreground">Drag to move task deadlines</span>
       </div>
 
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
@@ -225,7 +219,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && addOnDay()}
-            placeholder="Add a task for this day…"
+            placeholder="Add a task due this day…"
             className="mt-2"
           />
           <div className="mt-2 max-h-64 space-y-1 overflow-y-auto">
@@ -236,14 +230,14 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
                   <span className={cn("truncate", t.status === "completed" && "text-muted-foreground line-through")}>{t.title}</span>
                   <button
                     className="ml-auto text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => updateTask.mutate({ id: t.id, patch: { due_date: null } })}
+                    onClick={() => updateTask.mutate({ id: t.id, patch: { deadline: { kind: "none" } } })}
                   >
-                    remove date
+                    clear deadline
                   </button>
                 </div>
               ))}
             {openDay && (byDayLocal(tasks).get(localDayParam(openDay)) ?? []).length === 0 && (
-              <p className="py-4 text-center text-sm text-muted-foreground">Nothing scheduled.</p>
+              <p className="py-4 text-center text-sm text-muted-foreground">No task deadlines.</p>
             )}
           </div>
         </DialogContent>
@@ -255,9 +249,8 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
 function byDayLocal(tasks: Task[]): Map<string, Task[]> {
   const map = new Map<string, Task[]>()
   for (const t of tasks) {
-    const due = parseUTC(t.due_date)
-    if (!due) continue
-    const key = localDayParam(due)
+    const key = deadlineDayKey(t.deadline)
+    if (!key) continue
     const bucket = map.get(key) ?? []
     bucket.push(t)
     map.set(key, bucket)

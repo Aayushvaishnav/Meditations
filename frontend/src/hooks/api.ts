@@ -6,6 +6,7 @@ import { sseEvents } from "@/lib/stream"
 import { createBackup } from "@/lib/backup"
 import { createDataExport } from "@/lib/data-export"
 import { startBrowserDownload, type FileDownloadResult } from "@/lib/file-download"
+import { deadlineFromLegacy } from "@/lib/task-deadlines"
 import { tasksKey, beginTaskChange, rollbackTaskChange, settleTaskChange, invalidateTasks, reconcileTasks, withoutTaskTree } from "./task-cache"
 import type {
   AIConnectionTest,
@@ -74,6 +75,7 @@ export function useCreateTask() {
     onMutate: async (input) => {
       const now = new Date().toISOString()
       const tempId = `temp-${crypto.randomUUID()}`
+      const deadline = input.deadline ?? deadlineFromLegacy(input.due_date ?? null)
       const temp: Task = {
         id: tempId,
         list_id: input.list_id ?? null,
@@ -82,7 +84,8 @@ export function useCreateTask() {
         description: input.description ?? null,
         priority: input.priority ?? 0,
         status: input.status ?? "todo",
-        due_date: input.due_date ?? null,
+        deadline,
+        due_date: deadline.kind === "timed" ? deadline.at : null,
         estimated_minutes: input.estimated_minutes ?? null,
         actual_minutes: 0,
         recurrence_rule: input.recurrence_rule ?? null,
@@ -118,6 +121,11 @@ export function useUpdateTask() {
       api.patch<Task>(`/tasks/${id}`, patch),
     onMutate: async ({ id, patch }) => {
       const extras: Partial<Task> = {}
+      if (patch.deadline !== undefined || patch.due_date !== undefined) {
+        const deadline = patch.deadline ?? deadlineFromLegacy(patch.due_date ?? null)
+        extras.deadline = deadline
+        extras.due_date = deadline.kind === "timed" ? deadline.at : null
+      }
       if (patch.status === "completed") extras.completed_at = new Date().toISOString()
       if (patch.status !== undefined && patch.status !== "completed") extras.completed_at = null
       const change = await beginTaskChange(qc, tasks => tasks.map(task => task.id === id ? { ...task, ...patch, ...extras } : task))
@@ -205,7 +213,8 @@ export function useSaveAISettings() {
   return useMutation({
     mutationFn: (input: { provider: string; model_name: string; fast_model_name?: string; base_url: string | null; api_key?: string }) =>
       api.put<AISettingsView>("/settings/ai", input),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      qc.setQueryData(["ai-settings"], data)
       qc.invalidateQueries({ queryKey: ["ai-settings"] })
       toast.success("AI settings saved")
     },
@@ -217,7 +226,8 @@ export function useResetAISettings() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.delete<AISettingsView>("/settings/ai"),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      qc.setQueryData(["ai-settings"], data)
       qc.invalidateQueries({ queryKey: ["ai-settings"] })
       toast.success("Reset to env defaults")
     },
@@ -240,10 +250,13 @@ export function useSaveAppPrefs() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: { target_deep_work_hours?: number }) => api.put<AppPrefs>("/settings/app", input),
-    onSuccess: () => Promise.all([
-      qc.invalidateQueries({ queryKey: ["app-prefs"] }),
-      qc.invalidateQueries({ queryKey: ["scores-daily"] }),
-    ]),
+    onSuccess: (data) => {
+      qc.setQueryData(["app-prefs"], data)
+      return Promise.all([
+        qc.invalidateQueries({ queryKey: ["app-prefs"] }),
+        qc.invalidateQueries({ queryKey: ["scores-daily"] }),
+      ])
+    },
     onError: () => toast.error("Couldn't save preferences"),
   })
 }

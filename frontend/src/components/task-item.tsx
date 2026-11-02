@@ -18,8 +18,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useCreateTask, useDecomposeTask, useDeleteTask, useUpdateTask } from "@/hooks/api"
 import { useFocusTimer } from "@/stores/timer"
-import { formatDue, formatDuration, parseUTC, toISO, startOfDay } from "@/lib/dates"
+import { formatDuration, startOfDay } from "@/lib/dates"
+import { deadlineCutoff, formatDeadline, localDayParam } from "@/lib/task-deadlines"
 import type { Task } from "@/api/types"
+import { useDeadlinePassed } from "@/hooks/use-deadline-passed"
 import { cn } from "cn"
 
 export function TaskCheckbox({ task }: { task: Task }) {
@@ -37,13 +39,12 @@ export function TaskCheckbox({ task }: { task: Task }) {
 }
 
 function DueChip({ task }: { task: Task }) {
-  const due = parseUTC(task.due_date)
-  if (!due) return null
-  const overdue = task.status !== "completed" && due.getTime() < Date.now()
+  const overdue = useDeadlinePassed(task.status === "completed" ? null : deadlineCutoff(task.deadline))
+  if (task.deadline.kind === "none") return null
   return (
     <Badge variant="outline" className={cn("gap-1", overdue ? "text-overdue" : "text-muted-foreground")}>
       <CalendarDays className="size-3" />
-      {formatDue(due)}
+      {formatDeadline(task.deadline)}
     </Badge>
   )
 }
@@ -71,13 +72,12 @@ function TaskMenu({ task, lists, onRename }: { task: Task; lists: { id: string; 
 
   const setDue = (days: number | null) => {
     if (days === null) {
-      updateTask.mutate({ id: task.id, patch: { due_date: null } })
+      updateTask.mutate({ id: task.id, patch: { deadline: { kind: "none" } } })
       return
     }
     const d = startOfDay(new Date())
     d.setDate(d.getDate() + days)
-    d.setHours(9, 0, 0, 0)
-    updateTask.mutate({ id: task.id, patch: { due_date: toISO(d) } })
+    updateTask.mutate({ id: task.id, patch: { deadline: { kind: "date", date: localDayParam(d) } } })
   }
 
   return (
@@ -126,7 +126,7 @@ function TaskMenu({ task, lists, onRename }: { task: Task; lists: { id: string; 
           </DropdownMenuSubContent>
         </DropdownMenuSub>
         <DropdownMenuSub>
-          <DropdownMenuSubTrigger>Due date</DropdownMenuSubTrigger>
+          <DropdownMenuSubTrigger>Deadline</DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             <DropdownMenuItem onClick={() => setDue(0)}>Today</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setDue(1)}>Tomorrow</DropdownMenuItem>
@@ -196,12 +196,12 @@ function AddSubtask({ parent }: { parent: Task }) {
 
 export function TaskItem({
   task,
-  children,
+  subtasks,
   lists,
   showList = false,
 }: {
   task: Task
-  children: Task[]
+  subtasks: Task[]
   lists: { id: string; name: string }[]
   showList?: boolean
 }) {
@@ -220,7 +220,7 @@ export function TaskItem({
           "flex items-start gap-2.5 rounded-xl border border-transparent px-3 py-2 transition-colors hover:border-[var(--glass-border)] hover:bg-[var(--glass-hover)]",
         )}
       >
-        {children.length > 0 ? (
+        {subtasks.length > 0 ? (
           <button
             onClick={() => setExpanded((e) => !e)}
             aria-label={expanded ? "Collapse subtasks" : "Expand subtasks"}
@@ -314,15 +314,15 @@ export function TaskItem({
 
       {expanded ? (
         <div className="ml-10 border-l-[var(--glass-border)] pl-3 pb-1">
-          {children.map((child) => (
-            <TaskItem key={child.id} task={child} children={[]} lists={lists} />
+          {subtasks.map((child) => (
+            <TaskItem key={child.id} task={child} subtasks={[]} lists={lists} />
           ))}
           <div className="pb-1">
             <AddSubtask parent={task} />
           </div>
         </div>
       ) : (
-        children.length > 0 && (
+        subtasks.length > 0 && (
           <div className="ml-10 pl-3 pb-1">
             <AddSubtask parent={task} />
           </div>

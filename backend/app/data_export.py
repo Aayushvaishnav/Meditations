@@ -18,8 +18,9 @@ TABLES = (
     (models.TaskList, "id name color icon is_favorite created_at"),
     (
         models.Task,
-        "id list_id parent_id title description priority status due_date estimated_minutes actual_minutes recurrence_rule recurrence_series_id recurrence_occurrence tags order_index completed_at created_at updated_at",
+        "id list_id parent_id title description priority status due_date deadline_date estimated_minutes actual_minutes recurrence_rule recurrence_series_id recurrence_occurrence tags order_index completed_at created_at updated_at",
     ),
+    (models.TimeBlock, "id task_id kind timezone start_at end_at start_date end_date created_at updated_at"),
     (models.FocusSession, "id task_id duration_minutes session_type notes created_at"),
     (models.Habit, "id name target_frequency created_at"),
     (models.HabitLog, "id habit_id date completed"),
@@ -65,8 +66,21 @@ week_start identifies Monday and month uses YYYY-MM.
 
 Timestamps are ISO 8601 UTC with a trailing Z, preserving stored fractional seconds.
 Naive database datetimes are interpreted as UTC. No timezone or all-day intent is
-inferred. Task due_date preserves the existing scheduling value, including legacy
-synthetic 09:00 local values; it does not create a separate deadline or work block.
+inferred. Task due_date preserves the timed deadline instant, including legacy
+synthetic 09:00 local values; exporting it does not create a work block.
+The additive v1 tasks.deadline_date field is a nullable YYYY-MM-DD calendar label;
+it is never timezone-converted and is mutually exclusive with due_date. Consumers
+should ignore unknown fields and collections when reading v1 archives.
+The additive time_blocks collection holds planned timed or all-day work with
+inclusive starts and exclusive ends, independent of task deadlines, completion,
+and recorded focus. Overlap is allowed. kind is "timed" or "all_day". Timed blocks
+carry canonical UTC start_at/end_at instants and an IANA timezone identifying the
+planning zone; timezone is metadata, not an offset to apply to those instants.
+Their start_date/end_date are null. All-day blocks carry YYYY-MM-DD start_date/
+end_date labels that must never be timezone-converted; timezone and start_at/
+end_at are null. Local datetime input resolves to timed instants plus a zone;
+exports contain only this canonical representation, not local input fields.
+Task deletion removes its blocks; task recurrence does not copy blocks.
 Focus created_at is the recorded session timestamp, not a reconstructed start time.
 
 ## Collections and fields
@@ -74,12 +88,14 @@ Focus created_at is the recorded session timestamp, not a reconstructed start ti
 Every record includes the following fields; missing collections are not omitted.
 
 - lists: id, name, color, icon, is_favorite, created_at.
-- tasks: id, list_id, parent_id, title, description, priority, status, due_date,
+- tasks: id, list_id, parent_id, title, description, priority, status, due_date, deadline_date,
   estimated_minutes, actual_minutes, recurrence_rule, recurrence_series_id,
   recurrence_occurrence, tags, order_index, completed_at, created_at, updated_at.
   Priority is 0 (none), 1 (low), 2 (medium), or 3 (high). Status is todo,
   in_progress, completed, or canceled. tags is a JSON array. recurrence_rule is
   preserved as stored; exporting does not expand recurrence or create occurrences.
+- time_blocks: id, task_id, kind, timezone, start_at, end_at, start_date, end_date,
+  created_at, updated_at.
 - focus_sessions: id, task_id, duration_minutes, session_type, notes, created_at.
 - habits: id, name, target_frequency, created_at.
 - habit_logs: id, habit_id, date, completed.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time
+
 from sqlalchemy.dialects.sqlite import insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -23,7 +25,12 @@ async def spawn_successor(session: AsyncSession, task: Task) -> None:
     if task.recurrence_occurrence is None:
         raise ValueError("Recurring task is missing its occurrence identity")
 
-    next_due = next_occurrence(task.recurrence_rule, task.due_date or task.completed_at or utc_now())
+    anchor = (
+        datetime.combine(task.deadline_date, time())
+        if task.deadline_date is not None
+        else task.due_date or task.completed_at or utc_now()
+    )
+    next_due = next_occurrence(task.recurrence_rule, anchor)
     if next_due is None:
         return
 
@@ -33,7 +40,8 @@ async def spawn_successor(session: AsyncSession, task: Task) -> None:
         title=task.title,
         description=task.description,
         priority=task.priority,
-        due_date=next_due,
+        due_date=next_due if task.deadline_date is None else None,
+        deadline_date=next_due.date() if task.deadline_date is not None else None,
         estimated_minutes=task.estimated_minutes,
         recurrence_rule=task.recurrence_rule,
         recurrence_series_id=task.recurrence_series_id,

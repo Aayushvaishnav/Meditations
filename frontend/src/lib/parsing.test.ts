@@ -12,12 +12,18 @@ describe("parseQuickAdd", () => {
   it("extracts title, due, priority, list, tag and estimate (plan §6.1 example)", () => {
     const p = parseQuickAdd("Review Q3 budget tomorrow 3pm !1 #finance @urgent ~45m")
     expect(p.title).toBe("Review Q3 budget")
-    expect(p.due_date).not.toBeNull()
+    expect(p.deadline.kind).toBe("timed")
     expect(p.priority).toBe(3) // !1 -> High
     expect(p.list_name).toBe("finance")
     expect(p.tags).toEqual(["urgent"])
     expect(p.estimated_minutes).toBe(45)
     expect(p.recurrence_rule).toBeNull()
+  })
+
+  it("keeps today after 09:00 and parses date-only weekdays without invented times", () => {
+    expect(parseQuickAdd("review today").deadline).toEqual({ kind: "date", date: "2026-10-14" })
+    expect(parseQuickAdd("review tue").deadline).toEqual({ kind: "date", date: "2026-10-20" })
+    expect(parseQuickAdd("review tomorrow 09:00").deadline).toEqual({ kind: "timed", at: new Date(2026, 9, 15, 9).toISOString() })
   })
 
   it("maps !2 to medium and !3 to low", () => {
@@ -53,26 +59,26 @@ describe("parseQuickAdd", () => {
   it("keeps plain text untouched", () => {
     const p = parseQuickAdd("read a chapter of Dune")
     expect(p.title).toBe("read a chapter of Dune")
-    expect(p.due_date).toBeNull()
+    expect(p.deadline).toEqual({ kind: "none" })
     expect(p.tags).toEqual([])
   })
 
   it("rolls a bare past time forward to tomorrow", () => {
     const p = parseQuickAdd("gym 9am")
-    expect(p.due_date).not.toBeNull()
-    const due = new Date(p.due_date!)
+    expect(p.deadline.kind).toBe("timed")
+    const due = new Date((p.deadline as { kind: "timed"; at: string }).at)
     expect(due).toEqual(new Date(2026, 9, 15, 9))
   })
 
   it("rolls a past weekday to next week", () => {
     const p = parseQuickAdd("meet alex tue 3pm")
-    expect(new Date(p.due_date!)).toEqual(new Date(2026, 9, 20, 15))
+    expect(new Date((p.deadline as { kind: "timed"; at: string }).at)).toEqual(new Date(2026, 9, 20, 15))
   })
-  it("uses 09:00 for a date-only phrase and preserves an explicit time", () => {
+  it("keeps date-only phrases separate from explicit times", () => {
     const dateOnly = parseQuickAdd("review tomorrow")
     const timed = parseQuickAdd("review tomorrow 3pm")
     expect(dateOnly.title).toBe("review")
-    expect(dateOnly.due_date).toBe(new Date(2026, 9, 15, 9).toISOString())
-    expect(timed.due_date).toBe(new Date(2026, 9, 15, 15).toISOString())
+    expect(dateOnly.deadline).toEqual({ kind: "date", date: "2026-10-15" })
+    expect(timed.deadline).toEqual({ kind: "timed", at: new Date(2026, 9, 15, 15).toISOString() })
   })
 })

@@ -100,6 +100,14 @@ async def test_all_records(client, tmp_path):
         await session.commit()
         session.add_all(
             [
+                m.TimeBlock(id="block", task_id="child", kind="timed",
+                            timezone="Asia/Kolkata", start_at=stamp,
+                            end_at=datetime(2026, 10, 31, 0, 15, 1, 654321),
+                            created_at=stamp, updated_at=stamp),
+                m.TimeBlock(id="all-day", task_id="child", kind="all_day",
+                            timezone=None, start_date=date(2026, 10, 30),
+                            end_date=date(2026, 11, 2),
+                            created_at=stamp, updated_at=stamp),
                 m.FocusSession(
                     id="focus",
                     task_id="child",
@@ -145,6 +153,20 @@ async def test_all_records(client, tmp_path):
         if model is m.JournalEntry:
             expected = expected - {"raw_markdown"} | {"markdown_file"}
         assert all(set(row) == expected for row in data[model.__tablename__])
+    assert data["time_blocks"] == [{
+        "id": "all-day", "task_id": "child", "kind": "all_day", "timezone": None,
+        "start_at": None, "end_at": None,
+        "start_date": "2026-10-30", "end_date": "2026-11-02",
+        "created_at": "2026-10-30T12:34:56.123456Z",
+        "updated_at": "2026-10-30T12:34:56.123456Z",
+    }, {
+        "id": "block", "task_id": "child", "kind": "timed",
+        "timezone": "Asia/Kolkata", "start_date": None, "end_date": None,
+        "start_at": "2026-10-30T12:34:56.123456Z",
+        "end_at": "2026-10-31T00:15:01.654321Z",
+        "created_at": "2026-10-30T12:34:56.123456Z",
+        "updated_at": "2026-10-30T12:34:56.123456Z",
+    }]
     child = data["tasks"][0]
     assert child["id"] == "child" and child["parent_id"] == "parent"
     assert child["due_date"] == "2026-10-30T12:34:56.123456Z"
@@ -181,6 +203,7 @@ async def test_all_records(client, tmp_path):
         "lists",
         "tasks",
         "focus_sessions",
+        "time_blocks",
         "habits",
         "habit_logs",
         "journal_entries",
@@ -199,7 +222,10 @@ async def test_empty(client, tmp_path):
     await create_export(db.get_engine(), path)
     files = unpack(path.read_bytes())
     assert set(files) == {"README.md", "manifest.json", "data.json"}
-    assert all(value == [] for value in json.loads(files["data.json"]).values())
+    data = json.loads(files["data.json"])
+    assert data["time_blocks"] == []
+    assert json.loads(files["manifest.json"])["counts"]["time_blocks"] == 0
+    assert all(value == [] for value in data.values())
 
 
 @pytest.mark.anyio

@@ -1,3 +1,4 @@
+import { deadlineFromLegacy } from "./task-deadlines"
 import { describe, expect, it } from "vitest"
 import type { Task } from "@/api/types"
 import type { Scope } from "@/stores/ui"
@@ -7,7 +8,7 @@ const now = new Date(2026, 2, 7, 12)
 function task(id: string, patch: Partial<Task> = {}): Task {
   return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: null,
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null,
-    tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00", ...patch }
+    tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00", deadline: deadlineFromLegacy(patch.due_date ?? null), ...patch }
 }
 const tasks = [
   task("overdue", { due_date: new Date(2026, 2, 6, 23, 59).toISOString() }),

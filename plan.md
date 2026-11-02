@@ -213,7 +213,11 @@ Startup applies the ordered migrations in `backend/app/migrations/` before
 search initialization, requests, or startup jobs. `PRAGMA user_version` records
 the schema version: v1 is the frozen pre-identity baseline; v2 adds task
 recurrence identity; v3 adds `search_vector_state` (`doc_id` primary key and
-`state`, either `pending` or `ready`). v4 adds the durable review-job ledger. Fresh installations run all four.
+`state`, either `pending` or `ready`). v4 adds the durable review-job ledger;
+v5 adds indexed `tasks.deadline_date` and an exclusive deadline-storage constraint;
+v6 adds task-owned timed `time_blocks` with an interval CHECK and cascading task FK;
+v7 rebuilds blocks with exclusive timed/all-day shapes and IANA timezone metadata.
+Fresh installations run all seven migrations.
 Existing unversioned installations adopt the baseline and then upgrade. An explicit SQLite
 `BEGIN IMMEDIATE` serializes startup writers; pending schema changes, backfills,
 and version updates commit together. A failed upgrade rolls back the pending
@@ -247,7 +251,8 @@ CREATE TABLE tasks (
     description TEXT,
     priority INTEGER DEFAULT 0, -- 0: None, 1: Low (!3), 2: Med (!2), 3: High (!1)
     status TEXT DEFAULT 'todo', -- 'todo', 'in_progress', 'completed', 'canceled'
-    due_date DATETIME,
+    due_date DATETIME, -- compatibility storage for timed deadlines; naive UTC
+    deadline_date DATE, -- date-only deadline label; no timezone conversion
     estimated_minutes INTEGER,
     actual_minutes INTEGER DEFAULT 0,
     recurrence_rule TEXT, -- e.g. 'FREQ=DAILY;INTERVAL=1' or 'RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR'
@@ -257,7 +262,8 @@ CREATE TABLE tasks (
     order_index REAL NOT NULL DEFAULT 0.0,
     completed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_task_deadline_exclusive CHECK (due_date IS NULL OR deadline_date IS NULL)
 );
 
 CREATE UNIQUE INDEX uq_task_recurrence_occurrence
@@ -351,7 +357,7 @@ CREATE TABLE monthly_summaries (
 2. **Multi-View Modes**:
    - **List View**: Grouped by Today, Upcoming, Overdue, or custom tag/list.
    - **Kanban Board**: Drag-and-drop between lists or statuses (`To Do`, `In Progress`, `Done`).
-   - **Interactive Calendar**: Six-week month grid of task due dates; drag between days to reschedule. Task-linked work blocks remain planned scheduling work.
+   - **Interactive Calendar**: Six-week month grid of task deadlines; drag between days to reschedule. Task-linked work blocks have a separate backend API; their calendar UI remains UX-03.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
@@ -368,14 +374,26 @@ calendar renders only tasks with valid due instants, including dated subtasks,
 and limits each day cell to four chips with the remainder available in its dialog.
 Calendar creation uses the currently selected list, or no list for smart scopes.
 
-Task scheduling still has one `due_date` instant. Date-only quick-add phrases
-and calendar creation choose 09:00 local time; this is a fallback time rather
-than an all-day flag. Naive backend timestamps are parsed as UTC, then grouped
-by the browser's local date. Moving a task preserves its local hours, minutes,
-seconds, and milliseconds and serializes the new instant as ISO UTC. Local Date
-construction advances nonexistent DST times by the gap and picks the earlier
-offset for ambiguous times. Explicit all-day intervals, IANA timezone metadata,
-and separate deadlines/work blocks remain SCHED-01 through SCHED-03.
+Task deadlines have explicit none, date-only, or timed states (SCHED-01 below).
+Date-only quick-add phrases and calendar creation keep the selected calendar date;
+explicit times stay timed, including 09:00. Timed backend values are parsed as UTC,
+then grouped by the browser's local date. Date-only labels bypass UTC conversion.
+Moving a dated task changes its deadline, preserves its kind, and preserves local
+hours, minutes, seconds, and milliseconds for timed deadlines. Native Date setters
+advance nonexistent DST times by the gap and choose the earlier offset for overlaps.
+Calendar copy identifies deadline changes instead of implying work attendance.
+The calendar still displays deadlines; work-block interaction remains UX-03.
+All-day work blocks and IANA metadata are available through the backend API;
+their calendar UI remains UX-03.
+
+Task overdue indicators in list, board, and calendar views subscribe through
+`hooks/use-deadline-passed.ts`. Timed deadlines become overdue strictly after their
+instant; date-only deadlines become overdue at the next browser-local midnight,
+using the next calendar day instead of adding 24 hours across DST. Completed tasks
+have no deadline subscription. Rescheduling replaces the timer, long delays are
+split at the browser timer limit, and focus/visibility changes recheck wall time
+after suspended callbacks. This updates the indicators only; scope selection,
+section grouping, and relative date labels retain their existing refresh behavior.
 
 The focus timer measures running wall time using `Date.now()` deltas, carrying
 fractional seconds across ticks and pauses. Delayed callbacks and system suspend
@@ -397,9 +415,156 @@ suspend. Delivery is once per client event; durable network retry/idempotency is
 outside this change.
 
 `npm run test:timezones` runs the controlled calendar, selector, parsing, date,
-and timer regressions in fresh processes under UTC, Asia/Kolkata,
-America/New_York, and Pacific/Kiritimati. Fake clocks exercise delayed callbacks
-without relying on actual host sleep or callback cadence.
+deadline, and timer regressions in fresh processes under UTC, Asia/Kolkata,
+America/New_York, Pacific/Kiritimati, America/Sao_Paulo, and Pacific/Apia. Historical
+midnight DST gaps and a skipped local date cover label-preserving arithmetic.
+Fake clocks exercise delayed callbacks without relying on host sleep or cadence.
+
+#### Task-linked time blocks (SCHED-02 / SCHED-03)
+
+`backend/app/time_blocks.py` owns discriminated block inputs;
+`app/time_zones.py` owns IANA validation and local-clock resolution. The dedicated
+`routers/time_blocks.py` exposes `/api/time-blocks` independently of tasks and focus.
+All blocks retain stable IDs, required cascading `task_id`, and creation/update
+UTC timestamps. Multiple and overlapping blocks are allowed. Blocks are plans
+instead of attendance: CRUD never changes task deadlines/status/actual minutes,
+focus history, journal metrics, or scores. Completion/cancellation preserves blocks;
+recurring task successors receive none. Deleting a task or descendant deletes its
+owned blocks.
+
+**Write shapes** (POST creates with 201; PUT `/{id}` replaces all input fields,
+preserving ID/creation time):
+
+| Input kind | Required fields besides `task_id` | Meaning |
+|---|---|---|
+| `timed` | `start_at`, `end_at`; `timezone` defaults to `UTC` | Absolute instants plus a separately stored IANA display/wall-clock zone |
+| `local` | `start_local`, `end_local`, `timezone` | Resolve local clock readings through the named zone; persist and return canonical `timed` |
+| `all_day` | `start_date`, `end_date` | Inclusive start and exclusive end calendar labels; no zone or synthetic instants |
+
+Omitted `kind` retains the SCHED-02 timed input contract. Naive `start_at`/`end_at`
+remain UTC even when timezone metadata is supplied; aware inputs normalize to
+naive UTC. Metadata never reinterprets absolute instants, and an input offset need
+not equal the display zone's offset. Local inputs instead express clock readings
+in that zone. Dates require `YYYY-MM-DD`; datetimes require an extended ISO time
+component. Unknown fields, mixed shapes (including inapplicable null fields),
+null required values, unknown zones, and nonpositive intervals return 422.
+
+The user selected explicit DST resolution. `ZoneInfo` candidates for both folds
+must round-trip through UTC to the original local clock reading. Gaps (including
+skipped dates) are rejected even with an offset. Repeated local times require an
+explicit offset matching a real occurrence; mismatching offsets are rejected for
+ordinary times too. Valid endpoints compare by UTC elapsed time, so a block may
+span a fold even when the end clock reading appears earlier. UTC and local
+projection overflow return 422. `tzdata` (PSF IANA fallback) is a locked dependency
+and is bundled with the frozen sidecar; standard `zoneinfo` uses host data when
+available, otherwise the bundled fallback. Accepted names come from the bundled
+IANA registry, including its aliases, instead of host-only `posix/`, `right/`, or
+`posixrules` keys. Zone IDs are retained without guessing the user's host zone.
+
+GET `/{id}` reads a block; DELETE removes it with 204. Missing blocks or associated
+tasks return 404. Responses have explicit `kind` (`timed` or `all_day`) and flat
+storage fields; inapplicable fields are null. Full PUT switches kinds by clearing
+all incompatible fields, including timezone for all-day blocks.
+
+GET collection filters are optional:
+- `task_id` and `kind=timed|all_day` select associations/shapes.
+- `start`/`end` are UTC instant bounds and select timed blocks.
+- `start_date`/`end_date` are calendar-label bounds and select all-day blocks.
+- Each range is half-open overlap (`block.end > start`, `block.start < end`);
+  one bound is valid and paired bounds require strictly increasing values.
+  Mixed instant/date ranges or a range incompatible with `kind` return 422.
+  All-day dates are never projected into an instant window or shifted by timezone.
+- Without a range both kinds are returned. Ordering is `(kind, start_at,
+  start_date, id)` (all-day first, then chronological within each kind).
+  Unknown task filters return an empty list.
+
+Migration v6 introduced timed blocks. Migration v7 rebuilds that table with
+`kind`, `timezone`, nullable instant fields, and nullable `start_date`/`end_date`.
+A single CHECK enforces the complete timed or all-day shape, explicit null
+exclusivity, and positive intervals; indexes cover task and both range families.
+All existing rows retain their IDs, associations, instant/timestamp bytes and
+become `kind=timed, timezone=UTC`; no host timezone or all-day intent is inferred.
+Existing file databases receive normal pre-upgrade checkpoints. SQLite backup and
+offline restore preserve both kinds; portable export v1 adds the explicit kind,
+zone, and date fields to its allowlist while retaining UTC fractional precision.
+Consumers ignore unknown fields/collections. No deadline becomes a block.
+
+For future calendar recurrence, wall-clock intent is the anchor's local clock in
+its stored IANA zone. Each occurrence must resolve its own local calendar date
+through that zone instead of adding a fixed UTC duration: 09:00 stays 09:00 across
+DST. Gaps need an explicit reschedule and ambiguous occurrences need a matching
+offset; the service must not silently shift or choose. All-day recurrence operates
+on calendar labels. This is the boundary contract only: no block RRULE, automatic
+expansion, series, or exception storage is introduced here (SCHED-04 owns them).
+Existing completion-triggered task recurrence keeps its UTC/date semantics.
+Work-block calendar UI remains UX-03; ICS and provider integration remain later
+work. No attendance or block-completion state is inferred.
+
+#### Task deadlines and scheduled work (SCHED-01)
+
+A deadline answers when a task is due; a work block answers when work is planned.
+These are independent dimensions. A task without a deadline can have future work
+blocks, and a dated task can remain unscheduled. The time-block API supports
+multiple timed or all-day blocks per task (SCHED-02/SCHED-03 above). No migration
+creates appointments, durations, or attendance from a deadline. Date-only deadlines
+are separate from all-day events.
+
+`Task.deadline` is the canonical API value:
+
+| State | JSON shape | Meaning |
+|---|---|---|
+| No deadline | `{"kind":"none"}` | No completion deadline; unrelated to future work-block presence |
+| Date-only | `{"kind":"date","date":"2026-11-02"}` | A calendar date label, unchanged by timezone conversion; no assumed hour |
+| Timed | `{"kind":"timed","at":"2026-11-02T09:00:00"}` | A naive-UTC instant on read; aware ISO input is normalized to naive UTC |
+
+Task create and PATCH accept this discriminated value. Omission on create means
+no deadline; omission on PATCH leaves the deadline unchanged. Explicit `kind:none`
+clears it. Null, malformed states, extra union properties, and conflicting
+`deadline` plus `due_date` writes return HTTP 422. The response also retains
+`due_date` as a timed-only compatibility projection and nullable read-only
+`deadline_date`. Legacy `due_date` writes select a timed deadline, and null clears
+any kind. Raw `deadline_date` writes are refused. The frontend's canonical tasks
+cache updates and rolls back the deadline and its legacy projection together.
+
+Storage keeps `due_date DATETIME` for timed deadlines and adds `deadline_date DATE`
+for date labels. A SQLite CHECK prevents both from being populated. The explicit
+API kind is derived from these columns instead of storing a redundant discriminator.
+Migration v5 adds the date column and index without rewriting any existing value:
+all non-null legacy `due_date` values remain timed deadlines, including synthetic
+09:00 fallbacks; null remains no deadline. Original date-only intent cannot be
+recovered from those timestamps. The user explicitly selected this preservation
+policy before migration. Existing IDs, recurrence identity, task associations,
+completion/focus history, and saved review snapshots remain unchanged. Existing
+file databases receive the usual DATA-03 pre-upgrade checkpoint; fresh and offline
+restored databases follow the same migrations. Older binaries refuse schema v5.
+
+The UI creates date-only deadlines from date-only quick-add phrases, calendar-day
+creation, and menu shortcuts. Explicit clock phrases select timed deadlines.
+Legacy times stay visible, including 09:00. Calendar drag edits the selected task's
+deadline instead of scheduling attendance, retains its kind, and leaves task
+completion/focus history independent. Lists and calendar share browser-local day
+selection; date-only items sort before timed items on the same date.
+
+`GET /api/tasks?overdue=true` uses strict instant comparison for timed deadlines
+and `deadline_date < UTC today` for date-only values. Callers may supply
+`as_of_date=YYYY-MM-DD` to choose the calendar-day cutoff for date-only deadlines;
+it does not alter timed comparisons. Existing `due_before` (exclusive) and
+`due_after` (inclusive) datetime filters remain timed-only. The browser fetches all
+tasks and uses its own local day for filters and date-only overdue indicators;
+UTC-default API results can therefore differ around midnight unless a caller
+supplies its local `as_of_date`. This preserves the existing UTC backend versus
+local-display distinction without inventing a persisted timezone.
+
+Daily scoring retains the timed-deadline planned-task rule. Date-only deadlines
+count on and after their label in the requested UTC report day, unless the task
+was completed before that day; canceled tasks remain excluded. Undated tasks
+count when completed that day. Live metrics may change on deadline edits, while
+saved reviews remain snapshots. AI capture with a date but no time creates a
+date-only deadline; explicit times retain the existing server-local interpretation
+before UTC normalization. Briefing includes date-only due/overdue tasks using
+UTC day boundaries. Portable export v1 adds nullable `tasks.deadline_date` as an
+additive field and preserves legacy timed values; consumers should ignore unknown
+fields. SQLite backups/restores preserve both storage forms.
 
 #### Task cache concurrency and telemetry refresh (QA-03)
 
@@ -444,8 +609,10 @@ and optional weekly BYDAY.
   re-enabling recurrence resumes the same identity.
 - Completion preserves the finished row and its focus/completion history. The
   successor copies task configuration, starts as todo with zero actual minutes,
-  and shares the completion transaction. Its due date is computed from the
-  current task's due date, or completion time when undated.
+  and shares the completion transaction. Timed deadlines retain their time;
+  date-only deadlines advance as calendar dates without gaining a time. An undated
+  recurring task retains the compatibility behavior: its next timed deadline is
+  computed from completion time. No work block is cloned or created.
 - `(series_id, occurrence_number)` is unique in SQLite. Conflict-targeted insert
   makes recompletion idempotent even if a successor was renamed, moved,
   rescheduled, completed, or canceled. Title, rule, date, and status are not
@@ -572,8 +739,8 @@ time, collection counts), `data.json`, and exact saved UTF-8 journal files under
 rating-only entries have empty files and absent days have no row or file. Journal
 JSON points to each file with `markdown_file` instead of duplicating raw content.
 
-An explicit allowlist of columns exports nine source collections: lists, tasks,
-focus sessions, habits, habit logs, journal metadata, daily scores, weekly
+An explicit allowlist of columns exports ten source collections: lists, tasks,
+time blocks, focus sessions, habits, habit logs, journal metadata, daily scores, weekly
 summaries, and monthly summaries. Existing primary/foreign keys and recurrence
 identity remain unchanged. Tasks retain scheduling values, tags, statuses,
 relationships, estimates, and ordering. Datetimes use explicit UTC `Z`, retaining
@@ -646,6 +813,16 @@ therefore wraps every model in `ResilientModel` (spaced retries on 429/5xx,
 `app/ai_factory.py`) and user-facing surfaces translate failures via
 `describe_ai_error()` (rate limit / auth / unreachable). The settings
 connection-test runs with `resilient=False` so misconfiguration fails fast.
+
+Settings forms derive untouched fields from query data and keep edited fields
+as local drafts, including edits made before the initial response. Background
+refetches preserve those drafts. Successful save/reset responses update the query
+cache and release acknowledged field overrides; edits made to a field while the
+request is pending remain local. Acknowledged fields then follow later query
+updates again. An acknowledged API key is cleared even if another field was
+edited during the request, while a newer key draft is retained. Preference saves
+likewise release their draft only when there is no newer edit. API keys are never
+prefilled, and a blank key input leaves the stored key unchanged on save.
 
 ```python
 from typing import Optional

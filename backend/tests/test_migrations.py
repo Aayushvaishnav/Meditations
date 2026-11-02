@@ -61,8 +61,8 @@ async def test_fresh_and_legacy_equivalent_with_independent_backfill(engine):
     assert await version(engine) == migrations.LATEST_VERSION
     async with engine.connect() as conn:
         rows = (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all()
-        assert [tuple(row[:-2]) for row in rows] == [tuple(row) for row in original]
-        assert {row[0]: tuple(row[-2:]) for row in rows} == {
+        assert [tuple(row[:-3]) for row in rows] == [tuple(row) for row in original]
+        assert {row[0]: tuple(row[-3:-1]) for row in rows} == {
             'one': ('one', 0), 'two': ('two', 0), 'empty': (None, None), 'none': (None, None),
         }
         assert (await conn.exec_driver_sql('SELECT name FROM lists')).scalar_one() == 'Personal'
@@ -243,3 +243,68 @@ async def test_failed_review_jobs_upgrade_preserves_v3_then_retries(engine, monk
     assert await version(engine) == migrations.LATEST_VERSION
     async with engine.connect() as conn:
         assert (await conn.exec_driver_sql('SELECT count(*) FROM review_jobs')).scalar_one() == 0
+
+
+@pytest.mark.anyio
+async def test_failed_time_blocks_upgrade_preserves_v5_then_retries(engine, monkeypatch):
+    await baseline(engine)
+    async with engine.begin() as conn:
+        for migration in migrations.MIGRATIONS[1:5]:
+            await migration(conn)
+        await conn.exec_driver_sql('PRAGMA user_version = 5')
+        await conn.exec_driver_sql("UPDATE tasks SET deadline_date='2026-11-02' WHERE id='one'")
+        tasks = (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all()
+        focus = (await conn.exec_driver_sql('SELECT * FROM focus_sessions')).all()
+    before = await schema(engine)
+    real = migrations.MIGRATIONS
+
+    async def fail(conn):
+        await real[5](conn)
+        raise ValueError('injected time blocks failure')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(migrations, 'MIGRATIONS', (*real[:5], fail))
+        with pytest.raises(migrations.MigrationError, match='v6 failed; database intact at version 5'):
+            await migrations.migrate(engine)
+    assert await version(engine) == 5
+    assert await schema(engine) == before
+    for retry in (False, True):
+        if retry:
+            await migrations.migrate(engine)
+            assert await version(engine) == migrations.LATEST_VERSION
+        async with engine.connect() as conn:
+            assert (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all() == tasks
+            assert (await conn.exec_driver_sql('SELECT * FROM focus_sessions')).all() == focus
+    async with engine.connect() as conn:
+        assert (await conn.exec_driver_sql('SELECT count(*) FROM time_blocks')).scalar_one() == 0
+
+
+@pytest.mark.anyio
+async def test_time_blocks_database_constraints_and_task_cascade(engine):
+    await baseline(engine)
+    await migrations.migrate(engine)
+    async with engine.connect() as conn:
+        await conn.exec_driver_sql('PRAGMA foreign_keys=ON')
+        assert (await conn.exec_driver_sql('PRAGMA foreign_keys')).scalar_one() == 1
+        await conn.commit()
+    insert = (
+        'INSERT INTO time_blocks (id, task_id, start_at, end_at, kind, timezone, created_at, updated_at) '
+        "VALUES (?, ?, ?, ?, 'timed', 'UTC', '2026-11-02', '2026-11-02')"
+    )
+    for block_id, task_id, start, end, error in [
+        ('equal', 'one', '2026-11-02 10:00', '2026-11-02 10:00', 'CHECK'),
+        ('reverse', 'one', '2026-11-02 11:00', '2026-11-02 10:00', 'CHECK'),
+        ('orphan', 'missing', '2026-11-02 10:00', '2026-11-02 11:00', 'FOREIGN KEY'),
+        ('unassigned', None, '2026-11-02 10:00', '2026-11-02 11:00', 'NOT NULL'),
+    ]:
+        with pytest.raises(IntegrityError, match=error):
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql(insert, (block_id, task_id, start, end))
+    async with engine.begin() as conn:
+        for block_id, task_id in [('first', 'one'), ('overlap', 'one'), ('other', 'two')]:
+            await conn.exec_driver_sql(
+                insert, (block_id, task_id, '2026-11-02 10:00', '2026-11-02 11:00')
+            )
+        await conn.exec_driver_sql("DELETE FROM tasks WHERE id='one'")
+        assert (await conn.exec_driver_sql('SELECT id, task_id FROM time_blocks')).all() == [('other', 'two')]
+        assert (await conn.exec_driver_sql('PRAGMA foreign_key_check')).all() == []

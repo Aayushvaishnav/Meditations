@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as Date
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, Index, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, Column, Index, String, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.util import new_id, utc_now
@@ -20,12 +20,7 @@ class TaskList(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
-class Task(SQLModel, table=True):
-    __tablename__ = "tasks"
-    __table_args__ = (
-        Index("uq_task_recurrence_occurrence", "recurrence_series_id", "recurrence_occurrence", unique=True),
-    )
-
+class TaskFields(SQLModel):
     id: str = Field(default_factory=new_id, primary_key=True)
     list_id: str | None = Field(default=None, foreign_key="lists.id", ondelete="SET NULL", index=True)
     parent_id: str | None = Field(default=None, foreign_key="tasks.id", ondelete="CASCADE", index=True)
@@ -34,6 +29,7 @@ class Task(SQLModel, table=True):
     priority: int = 0  # 0 none, 1 low (!3), 2 med (!2), 3 high (!1)
     status: str = Field(default="todo", index=True)  # todo|in_progress|completed|canceled
     due_date: datetime | None = Field(default=None, index=True)
+    deadline_date: Date | None = Field(default=None, index=True)
     estimated_minutes: int | None = None
     actual_minutes: int = 0
     recurrence_rule: str | None = None
@@ -42,6 +38,43 @@ class Task(SQLModel, table=True):
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     order_index: float = 0.0
     completed_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Task(TaskFields, table=True):
+    __tablename__ = "tasks"
+    __table_args__ = (
+        Index("uq_task_recurrence_occurrence", "recurrence_series_id", "recurrence_occurrence", unique=True),
+        CheckConstraint("due_date IS NULL OR deadline_date IS NULL", name="ck_task_deadline_exclusive"),
+    )
+
+
+class TimeBlock(SQLModel, table=True):
+    __tablename__ = "time_blocks"
+    __table_args__ = (
+        CheckConstraint(
+            "(kind = 'timed' AND timezone IS NOT NULL "
+            "AND start_at IS NOT NULL AND end_at IS NOT NULL AND end_at > start_at "
+            "AND start_date IS NULL AND end_date IS NULL) OR "
+            "(kind = 'all_day' AND timezone IS NULL "
+            "AND start_at IS NULL AND end_at IS NULL "
+            "AND start_date IS NOT NULL AND end_date IS NOT NULL AND end_date > start_date)",
+            name="ck_time_block_shape",
+        ),
+    )
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    task_id: str = Field(foreign_key="tasks.id", ondelete="CASCADE", index=True)
+    kind: str = Field(default="timed")
+    # Preserve explicit NULL for all-day blocks
+    timezone: str | None = Field(
+        default="UTC", sa_column=Column(String().evaluates_none(), nullable=True),
+    )
+    start_at: datetime | None = Field(default=None, index=True)
+    end_at: datetime | None = Field(default=None, index=True)
+    start_date: Date | None = Field(default=None, index=True)
+    end_date: Date | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 

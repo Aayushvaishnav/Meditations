@@ -10,6 +10,8 @@ from sqlmodel import select
 import app.agents as agents
 from app.ai_factory import create_agent_model, describe_ai_error, load_ai_settings, load_prompt_overrides
 from app.ai_usage import make_recorder
+from app.schemas import TaskResponse
+from sqlalchemy import or_, and_
 from app.models import DailyScore, JournalEntry, MonthlySummary, Task, WeeklySummary
 from app.routers.deps import SessionDep
 from app.routers.scores import DailyScoreResponse
@@ -391,7 +393,7 @@ async def decompose_task(body: DecomposeRequest, session: SessionDep):
     await session.commit()
     for sub in created:
         await session.refresh(sub)
-    return {"subtasks": created, "advice": review.advice}
+    return {"subtasks": [TaskResponse.model_validate(sub) for sub in created], "advice": review.advice}
 
 
 class CaptureRequest(BaseModel):
@@ -415,16 +417,22 @@ async def capture(body: CaptureRequest, session: SessionDep):
     created = []
     for item in review.tasks:
         due_utc: dt.datetime | None = None
+        deadline_date = None
+        if item.due_time and not item.due_date:
+            raise HTTPException(status_code=502, detail="AI returned a time without a date")
         if item.due_date:
             try:
-                naive = dt.datetime.fromisoformat(f"{item.due_date}T{item.due_time or '09:00'}")
                 # local-first assumption: the server runs on the user's machine,
                 # so naive AI-returned times are interpreted as system-local and
                 # normalized to naive UTC (the storage convention).
-                due_utc = naive.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                if item.due_time:
+                    naive = dt.datetime.fromisoformat(f"{item.due_date}T{item.due_time}")
+                    due_utc = naive.astimezone(dt.timezone.utc).replace(tzinfo=None)
+                else:
+                    deadline_date = dt.date.fromisoformat(item.due_date)
             except ValueError as exc:
                 raise HTTPException(status_code=502, detail=f"AI returned an invalid date: {item.due_date}") from exc
-        task = Task(id=new_id(), title=item.title, due_date=due_utc, priority=item.priority, tags=item.tags)
+        task = Task(id=new_id(), title=item.title, due_date=due_utc, deadline_date=deadline_date, priority=item.priority, tags=item.tags)
         session.add(task)
         created.append(task)
 
@@ -444,7 +452,7 @@ async def capture(body: CaptureRequest, session: SessionDep):
     await session.commit()
     for task in created:
         await session.refresh(task)
-    return {"tasks": created, "journal_snippet": snippet}
+    return {"tasks": [TaskResponse.model_validate(t).model_dump() for t in created], "journal_snippet": snippet}
 
 
 async def _briefing_data(session: SessionDep) -> dict:
@@ -455,7 +463,7 @@ async def _briefing_data(session: SessionDep) -> dict:
     overdue = (
         await session.exec(
             select(Task)
-            .where(Task.due_date < now, Task.status.in_(["todo", "in_progress"]))
+            .where(or_(Task.due_date < now, Task.deadline_date < today), Task.status.in_(["todo", "in_progress"]))
             .order_by(Task.due_date)
             .limit(20)
         )
@@ -464,7 +472,7 @@ async def _briefing_data(session: SessionDep) -> dict:
     due_today = (
         await session.exec(
             select(Task)
-            .where(Task.due_date >= now.replace(hour=0, minute=0, second=0), Task.due_date <= day_end, Task.status.in_(["todo", "in_progress"]))
+            .where(or_(and_(Task.due_date >= now.replace(hour=0, minute=0, second=0), Task.due_date <= day_end), Task.deadline_date == today), Task.status.in_(["todo", "in_progress"]))
             .limit(30)
         )
     ).all()
@@ -474,7 +482,7 @@ async def _briefing_data(session: SessionDep) -> dict:
     y_score = await session.get(DailyScore, yesterday)
 
     return {
-        "overdue_tasks": [f"{t.title} (due {t.due_date})" for t in overdue],
+        "overdue_tasks": [f"{t.title} (due {t.deadline_date or t.due_date})" for t in overdue],
         "due_today": [t.title for t in due_today],
         "yesterday_feedback": y_score.feedback if y_score else None,
         "yesterday_journal_excerpt": (y_entry.raw_markdown[-1500:] if y_entry else None),

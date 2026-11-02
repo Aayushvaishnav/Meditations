@@ -13,7 +13,7 @@ npm run dev        # http://localhost:5173, expects backend on :8000 (see ../bac
 
 ```bash
 npm run test            # Vitest component, hook, store, and utility regressions
-npm run test:timezones  # Calendar/date/timer suite in UTC, Kolkata, New York, Kiritimati
+npm run test:timezones  # Dates/deadlines/timers in UTC, Kolkata, New York, Kiritimati, São Paulo, Apia
 npm run build           # tsc -b + vite build
 ```
 
@@ -26,10 +26,13 @@ npm run build           # tsc -b + vite build
 - **List view** (`src/components/task-sections.tsx`): sections Overdue / Today / Tomorrow /
   Upcoming / No date / Completed, scoped to smart views or a list; search filter;
   inline rename (double-click), subtasks (expand + add), per-task menu (priority, due, move, delete).
-- **Calendar** (`src/components/calendar-view.tsx`): month grid of task due dates,
+- **Calendar** (`src/components/calendar-view.tsx`): month grid of task deadlines,
   sharing smart/list scope and title/tag search with the list view. Creation keeps
-  the selected list; drag moves preserve local clock time, including seconds and
-  milliseconds. Canceled tasks stay hidden; completed tasks appear in Completed.
+  the selected list and creates a date-only deadline. Dragging changes the deadline,
+  preserving date-only intent or a timed deadline's local clock precision. Timed
+  09:00 values show their time instead of being treated as date-only. Canceled tasks
+  stay hidden; completed tasks appear in Completed. This is a deadline calendar;
+  task-linked work blocks have a separate backend API; their UI remains UX-03.
 - **Focus timer** (`src/stores/timer.ts`): wall-clock-based Pomodoro and stopwatch,
   including delayed callbacks and suspend during the current app lifecycle. Pauses
   exclude elapsed time. A delayed Pomodoro logs one work session, consumes the
@@ -46,10 +49,19 @@ npm run build           # tsc -b + vite build
 - All datetimes arrive naive UTC from the API and are parsed with `parseUTC()`
   (appends `Z`); outgoing datetimes are aware ISO (`toISOString()`), which the
   backend normalizes.
-- Date-only quick-add input and calendar creation use 09:00 local time as a
-  fallback, rather than an all-day flag. Calendar moves use native local Date
-  construction: DST gaps advance by the gap and ambiguous times use the earlier
-  offset. Separate scheduling/all-day/timezone metadata remains planned work.
+- `Task.deadline` explicitly distinguishes `none`, `date` (`YYYY-MM-DD`), and
+  `timed` (UTC instant). Quick-add date-only phrases and calendar/menu day choices
+  keep date labels instead of inventing a time. A date-only deadline becomes
+  overdue at the next local midnight. Explicit times, including 09:00, remain
+  timed; every legacy due instant keeps its original value and timed intent.
+- `lib/task-deadlines.ts` owns deadline display, day selection, cutoff, and moves;
+  `lib/date-values.ts` owns UTC parsing and calendar arithmetic. Timed moves use
+  native Date setters: DST gaps advance by the gap and overlaps use the earlier
+  offset. Date labels bypass UTC conversion. Task-linked work blocks use a separate
+  backend API with IANA metadata and all-day intervals; UI support remains UX-03.
+- Legacy `due_date` remains a timed-only API projection. New writes use `deadline`
+  instead of mixing both fields; optimistic mutations keep both projections
+  consistent. A task without a deadline is independent of future scheduled work.
 - Single tasks cache (`["tasks"]`) — grouping/filtering happens client-side;
   mutations invalidate after settle.
 - UI state (view, scope) persists to localStorage via zustand `persist`.

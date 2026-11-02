@@ -156,6 +156,12 @@ def test_decompose_creates_subtasks(client, monkeypatch):
     body = r.json()
     assert body["advice"] == "Do the outline before lunch."
 
+    assert len(body["subtasks"]) == 2
+    for subtask in body["subtasks"]:
+        assert subtask["deadline"] == {"kind": "none"}
+        assert subtask["due_date"] is None and subtask["deadline_date"] is None
+        assert subtask["parent_id"] == task["id"]
+
     children = client.get(f"/api/tasks/{task['id']}/children").json()
     assert [c["title"] for c in children] == ["Draft outline", "Write first pass"]
     assert children[0]["estimated_minutes"] == 30 and children[0]["priority"] == 2

@@ -4,6 +4,7 @@ import type { DragEndEvent } from "@dnd-kit/core"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Task } from "@/api/types"
+import { deadlineFromLegacy } from "@/lib/task-deadlines"
 import { useUi } from "@/stores/ui"
 import App from "@/App"
 
@@ -34,6 +35,7 @@ vi.mock("@/components/skeletons", () => ({ KanbanSkeleton: () => null, TaskListS
 
 function task(id: string, patch: Partial<Task> = {}): Task {
   return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: new Date(2026, 2, 8, 9).toISOString(),
+    deadline: deadlineFromLegacy(patch.due_date !== undefined ? patch.due_date : new Date(2026, 2, 8, 9).toISOString()),
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null,
     tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00", ...patch }
 }
@@ -57,12 +59,12 @@ describe("calendar task context", () => {
     mocks.tasks = [task("Planning", { list_id: "work" }), task("Other", { list_id: "home" }), task("Review", { list_id: "work", tags: ["PLAN"] })]
     useUi.setState({ scope: { kind: "list", id: "work" }, search: "plan" })
     render(<App />)
-    expect(screen.getByRole("button", { name: "Planning" })).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Review" })).toBeTruthy()
-    expect(screen.queryByRole("button", { name: "Other" })).toBeNull()
+    expect(screen.getByRole("button", { name: /^Planning/ })).toBeTruthy()
+    expect(screen.getByRole("button", { name: /^Review/ })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: /^Other/ })).toBeNull()
     act(() => useUi.getState().setSearch("other"))
-    expect(screen.queryByRole("button", { name: "Planning" })).toBeNull()
-    expect(screen.queryByRole("button", { name: "Other" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull()
+    expect(screen.queryByRole("button", { name: /^Other/ })).toBeNull()
   })
 
   it.each([
@@ -92,7 +94,7 @@ describe("calendar task context", () => {
     const input = screen.getByRole("textbox")
     fireEvent.change(input, { target: { value: "  New task  " } })
     fireEvent.keyDown(input, { key: "Enter" })
-    expect(mocks.create).toHaveBeenCalledWith({ title: "New task", list_id: "work", due_date: new Date(2026, 2, 8, 9).toISOString() })
+    expect(mocks.create).toHaveBeenCalledWith({ title: "New task", list_id: "work", deadline: { kind: "date", date: "2026-03-08" } })
     expect((input as HTMLInputElement).value).toBe("")
   })
 
@@ -105,7 +107,7 @@ describe("calendar task context", () => {
     expect(mocks.create).not.toHaveBeenCalled()
     fireEvent.change(input, { target: { value: "New task" } })
     fireEvent.keyDown(input, { key: "Enter" })
-    expect(mocks.create).toHaveBeenCalledWith({ title: "New task", list_id: null, due_date: new Date(2026, 2, 8, 9).toISOString() })
+    expect(mocks.create).toHaveBeenCalledWith({ title: "New task", list_id: null, deadline: { kind: "date", date: "2026-03-08" } })
   })
 })
 
@@ -134,7 +136,7 @@ describe("calendar dates and rescheduling", () => {
     render(<App />)
     drop("Move", target)
     const expected = new Date(target.getFullYear(), target.getMonth(), target.getDate(), hour, minute, 42, 123)
-    expect(mocks.update).toHaveBeenCalledWith({ id: "Move", patch: { due_date: expected.toISOString() } })
+    expect(mocks.update).toHaveBeenCalledWith({ id: "Move", patch: { deadline: { kind: "timed", at: expected.toISOString() } } })
   })
 
   it("ignores canceled drops, other targets, unknown tasks, unscheduled tasks and same-day moves", () => {
@@ -152,8 +154,8 @@ describe("calendar dates and rescheduling", () => {
     mocks.tasks = [task("Scheduled")]
     render(<App />)
     fireEvent.click(screen.getByRole("button", { name: "Add task on 2026-03-08" }))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "remove date" }))
-    expect(mocks.update).toHaveBeenCalledWith({ id: "Scheduled", patch: { due_date: null } })
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "clear deadline" }))
+    expect(mocks.update).toHaveBeenCalledWith({ id: "Scheduled", patch: { deadline: { kind: "none" } } })
   })
 
   it("navigates year boundaries and returns to today's month", () => {
@@ -166,5 +168,28 @@ describe("calendar dates and rescheduling", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous month" }))
     fireEvent.click(screen.getByRole("button", { name: "Today" }))
     expect(screen.getByRole("button", { name: "Add task on 2026-12-31" })).toBeTruthy()
+  })
+})
+
+describe("explicit deadline intent", () => {
+  it("keeps date-only labels on the chosen day and shows timed 09:00 explicitly", () => {
+    mocks.tasks = [
+      task("Date only", { due_date: null, deadline: { kind: "date", date: "2026-03-08" } }),
+      task("Timed", { due_date: new Date(2026, 2, 8, 9).toISOString() }),
+    ]
+    render(<App />)
+    const buttons = cell("2026-03-08").getAllByRole("button").slice(1)
+    expect(buttons.map(button => button.textContent)).toEqual([
+      "Date only", expect.stringContaining("Timed"),
+    ])
+    const time = new Date(2026, 2, 8, 9).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    expect(buttons[1].textContent).toContain(time)
+  })
+
+  it("moves a date-only deadline without inventing a time or a work block", () => {
+    mocks.tasks = [task("Date only", { due_date: null, deadline: { kind: "date", date: "2026-03-08" } })]
+    render(<App />)
+    drop("Date only", new Date(2026, 2, 10))
+    expect(mocks.update).toHaveBeenCalledWith({ id: "Date only", patch: { deadline: { kind: "date", date: "2026-03-10" } } })
   })
 })

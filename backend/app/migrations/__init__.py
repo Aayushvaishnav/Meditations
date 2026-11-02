@@ -10,6 +10,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.migrations.baseline import STATEMENTS
+from app.migrations.time_block_shapes import migrate_time_block_shapes
 
 
 class MigrationError(RuntimeError):
@@ -48,11 +49,36 @@ async def _review_jobs(conn: AsyncConnection) -> None:
     )
 
 
+async def _task_deadlines(conn: AsyncConnection) -> None:
+    await conn.exec_driver_sql(
+        "ALTER TABLE tasks ADD COLUMN deadline_date DATE "
+        "CONSTRAINT ck_task_deadline_exclusive "
+        "CHECK (due_date IS NULL OR deadline_date IS NULL)"
+    )
+    await conn.exec_driver_sql("CREATE INDEX ix_tasks_deadline_date ON tasks (deadline_date)")
+
+
+async def _time_blocks(conn: AsyncConnection) -> None:
+    await conn.exec_driver_sql(
+        "CREATE TABLE time_blocks ("
+        "id VARCHAR NOT NULL PRIMARY KEY, task_id VARCHAR NOT NULL, "
+        "start_at DATETIME NOT NULL, end_at DATETIME NOT NULL, "
+        "created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, "
+        "CONSTRAINT ck_time_block_interval CHECK (end_at > start_at), "
+        "FOREIGN KEY(task_id) REFERENCES tasks (id) ON DELETE CASCADE)"
+    )
+    for column in ("task_id", "start_at", "end_at"):
+        await conn.exec_driver_sql(f"CREATE INDEX ix_time_blocks_{column} ON time_blocks ({column})")
+
+
 MIGRATIONS: tuple[Callable[[AsyncConnection], Awaitable[None]], ...] = (
     _baseline,
     _recurrence_identity,
     _search_vector_state,
     _review_jobs,
+    _task_deadlines,
+    _time_blocks,
+    migrate_time_block_shapes,
 )
 LATEST_VERSION = len(MIGRATIONS)
 
