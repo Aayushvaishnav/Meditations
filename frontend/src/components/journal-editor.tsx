@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import { Placeholder } from "@tiptap/extensions"
@@ -60,9 +60,11 @@ function RatingRow({
   label,
   value,
   onChange,
+  disabled,
 }: {
   label: string
   value: number | null
+  disabled: boolean
   onChange: (v: number | null) => void
 }) {
   return (
@@ -72,6 +74,7 @@ function RatingRow({
         {[1, 2, 3, 4, 5].map((n) => (
           <button
             key={n}
+            disabled={disabled}
             onClick={() => onChange(value === n ? null : n)}
             aria-label={`${label} ${n} of 5`}
             className={cn(
@@ -110,6 +113,7 @@ export function JournalView() {
   // markdown baseline after the last load: setContent-driven updates must not re-save
   const baselineMdRef = useRef<string>("")
   const saveTimer = useRef<number | null>(null)
+  const activityGeneration = useRef(0)
   // payload frozen at schedule time so a day switch can never redirect it
   const pendingSave = useRef<{ day: string; md: string; mood: number | null; energy: number | null } | null>(null)
 
@@ -121,6 +125,9 @@ export function JournalView() {
   const saveRef = useRef(save)
   saveRef.current = save
   const queryClient = useQueryClient()
+  // ProseMirror retains extension callbacks for the editor lifetime; dispatch to current handlers.
+  const extensionHandlers = useRef({ insertActivity, runAssist })
+  extensionHandlers.current = { insertActivity, runAssist }
 
   const editor = useEditor({
     extensions: [
@@ -131,10 +138,10 @@ export function JournalView() {
       Placeholder.configure({ placeholder: "Start writing… type / for blocks" }),
       SlashCommands.configure({
         onActivity: (ed) => {
-          void insertActivity(ed)
+          void extensionHandlers.current.insertActivity(ed)
         },
         onAI: (ed, action) => {
-          void runAssist(ed, action)
+          void extensionHandlers.current.runAssist(ed, action)
         },
       }),
     ],
@@ -147,8 +154,10 @@ export function JournalView() {
     force = false,
     overrides?: { mood?: number | null; energy?: number | null },
   ) {
+    if (loadedDay !== day || section !== "journal") return
     const md = getMarkdown(ed)
-    if (!force && md === baselineMdRef.current) return // programmatic setContent, not a user edit
+    // Returning to the baseline must replace any queued edit, including its ratings.
+    if (!force && md === baselineMdRef.current && !pendingSave.current) return
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     // React state updates are async: a rating click must pass its new value in
     // explicitly — moodRef/energyRef still hold the previous render's value here.
@@ -162,7 +171,7 @@ export function JournalView() {
   }
 
   /** Write the pending payload to its own day; call before any day switch. */
-  function flushSave() {
+  const flushSave = useCallback(() => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = null
     const pending = pendingSave.current
@@ -177,7 +186,20 @@ export function JournalView() {
       mood: pending.mood,
       energy: pending.energy,
     })
-  }
+  }, [queryClient])
+
+  const ready = loadedDay === day && section === "journal"
+  useEffect(() => {
+    editor?.setEditable(ready)
+  }, [editor, ready])
+
+  // Invalidate asynchronous work on every context exit, including away-and-back navigation.
+  useEffect(() => {
+    return () => {
+      activityGeneration.current += 1
+      flushSave()
+    }
+  }, [day, section, flushSave])
 
   // pull day switch + rating changes into the next save
   useEffect(() => {
@@ -187,12 +209,13 @@ export function JournalView() {
 
   // arriving from Second Brain: flush pending save to its own day, then jump
   useEffect(() => {
-    if (journalDay && journalDay !== day) {
+    if (!journalDay) return
+    if (journalDay !== day) {
       flushSave()
       setDay(journalDay)
-      useUi.setState({ journalDay: null })
     }
-  }, [journalDay, day])
+    useUi.setState({ journalDay: null })
+  }, [journalDay, day, flushSave])
 
   // load stored markdown once per day
   useEffect(() => {
@@ -202,7 +225,7 @@ export function JournalView() {
     setAssistView(null)
     assist.clear()
     const md = entry.data?.raw_markdown ?? ""
-    editor.commands.setContent(md)
+    editor.commands.setContent(md, { emitUpdate: false })
     baselineMdRef.current = getMarkdown(editor)
     setLoadedDay(day)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -216,8 +239,18 @@ export function JournalView() {
   }
 
   async function insertActivity(ed = editor) {
-    if (!ed) return
-    const fresh = await activity.refetch()
+    if (!ed || loadedDay !== day || section !== "journal") return
+    const generation = activityGeneration.current
+    let fresh: Awaited<ReturnType<typeof activity.refetch>>
+    try {
+      fresh = await activity.refetch()
+    } catch {
+      if (generation === activityGeneration.current && !ed.isDestroyed) {
+        toast.error("Couldn't load day activity")
+      }
+      return
+    }
+    if (generation !== activityGeneration.current || ed.isDestroyed) return
     if (!fresh.data) {
       toast.error("Couldn't load day activity")
       return
@@ -289,7 +322,7 @@ export function JournalView() {
   if (section !== "journal") return null
 
   return (
-    <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+    <main aria-busy={!ready} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-5">
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" onClick={() => shiftDay(-1)} aria-label="Previous day">
@@ -322,7 +355,7 @@ export function JournalView() {
           <ChevronRight />
         </Button>
         {!isToday && (
-          <Button variant="outline" size="xs" onClick={() => setDay(toDayParam(new Date()))}>
+          <Button variant="outline" size="xs" onClick={() => { flushSave(); setDay(toDayParam(new Date())) }}>
             Today
           </Button>
         )}
@@ -369,6 +402,7 @@ export function JournalView() {
       <>
       <div className="glass mt-3 flex flex-col gap-2 rounded-2xl px-4 py-3">
         <RatingRow
+          disabled={!ready}
           label="Mood"
           value={mood}
           onChange={(v) => {
@@ -377,6 +411,7 @@ export function JournalView() {
           }}
         />
         <RatingRow
+          disabled={!ready}
           label="Energy"
           value={energy}
           onChange={(v) => {
@@ -416,10 +451,10 @@ export function JournalView() {
       <DailyReviewCard day={day} />
 
       <div className="mt-3 flex items-center gap-2 pb-8 text-xs">
-        <Button variant="outline" size="xs" onClick={() => void insertActivity()}>
+        <Button variant="outline" size="xs" disabled={!ready} onClick={() => void insertActivity()}>
           <ListChecks /> Day activity
         </Button>
-        <Button variant="outline" size="xs" onClick={insertTemplate}>
+        <Button variant="outline" size="xs" disabled={!ready} onClick={insertTemplate}>
           <Sparkles /> Reflection template
         </Button>
         {entry.data && (

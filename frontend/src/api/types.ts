@@ -13,6 +13,8 @@ export interface Task {
   estimated_minutes: number | null
   actual_minutes: number
   recurrence_rule: string | null
+  recurrence_series_id: string | null
+  recurrence_occurrence: number | null
   tags: string[]
   order_index: number
   completed_at: string | null
@@ -138,6 +140,8 @@ export interface DailyScoreResponse {
     habits_completed: number
     habits_scheduled: number
   }
+  score_basis: "live" | "review_snapshot"
+  saved_review_score: number | null
   persisted: boolean
   feedback: string | null
   insight: string | null

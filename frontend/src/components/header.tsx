@@ -34,7 +34,6 @@ export function Header() {
 
   // "/" focuses the task filter; Escape clears it while focused
   useEffect(() => {
-    if (view === "calendar") return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
         e.preventDefault()
@@ -45,34 +44,32 @@ export function Header() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [view, search, setSearch])
+  }, [search, setSearch])
 
   return (
     <div className="flex items-center gap-3 px-6 pt-5 pb-3">
       <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      {view !== "calendar" && (
-        <div className="relative ml-auto">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={searchRef}
-            id="task-search-input"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter tasks…  /"
-            className="h-8 w-52 bg-transparent pr-7 pl-8 text-sm"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              aria-label="Clear filter"
-              className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          )}
-        </div>
-      )}
-      {view === "calendar" && <div className="ml-auto" />}
+      <div className="relative ml-auto">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          ref={searchRef}
+          id="task-search-input"
+          aria-label="Filter tasks"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Filter tasks…  /"
+          className="h-8 w-52 bg-transparent pr-7 pl-8 text-sm"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            aria-label="Clear filter"
+            className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
+      </div>
       <Tooltip>
         <TooltipTrigger
           render={

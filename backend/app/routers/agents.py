@@ -14,6 +14,7 @@ from app.models import DailyScore, JournalEntry, MonthlySummary, Task, WeeklySum
 from app.routers.deps import SessionDep
 from app.routers.scores import DailyScoreResponse
 from app.scoring import ScoreBreakdown, compute_daily_score
+from app.score_service import score_daily_metrics
 from app.search import content_for, index_document
 from app.search import search as hybrid_search
 from app.sse import sse, stream_response
@@ -67,6 +68,8 @@ def _score_response(day: dt.date, breakdown: ScoreBreakdown, row: DailyScore) ->
         target_deep_work_hours=breakdown.target_deep_work_hours,
         metrics=breakdown.metrics,
         persisted=True,
+        score_basis="review_snapshot",
+        saved_review_score=row.final_score,
         feedback=row.feedback,
         insight=row.insight,
     )
@@ -110,9 +113,12 @@ async def _persist_daily(session: SessionDep, day: dt.date, breakdown: ScoreBrea
     row = await session.get(DailyScore, day)
     if row is None:
         row = DailyScore(date=day)
+    breakdown = compute_daily_score(
+        breakdown.metrics, target_hours=breakdown.target_deep_work_hours, llm_nudge=review.llm_nudge
+    )
     row.deterministic_score = breakdown.weighted_score
-    row.llm_nudge = review.llm_nudge
-    row.final_score = min(100.0, max(0.0, breakdown.weighted_score + review.llm_nudge))
+    row.llm_nudge = breakdown.llm_nudge
+    row.final_score = breakdown.final_score
     row.rubric_breakdown_json = json.dumps(
         {
             **breakdown.model_dump(),
@@ -138,7 +144,7 @@ async def rollup_daily(session: SessionDep, day: dt.date | None = None):
         raise HTTPException(status_code=404, detail=f"No journal entry for {day}; write one first.")
 
     metrics = await collect_daily_metrics(session, day)
-    breakdown = compute_daily_score(metrics)
+    breakdown = await score_daily_metrics(session, metrics)
     deps = await _daily_deps(session, day, metrics, entry)
 
     overrides = await load_prompt_overrides(session)
@@ -167,7 +173,7 @@ async def rollup_daily_stream(session: SessionDep, day: dt.date | None = None):
 
     # All DB reads happen before streaming; only the final write runs in the stream.
     metrics = await collect_daily_metrics(session, day)
-    breakdown = compute_daily_score(metrics)
+    breakdown = await score_daily_metrics(session, metrics)
     deps = await _daily_deps(session, day, metrics, entry)
     overrides = await load_prompt_overrides(session)
 
@@ -194,8 +200,7 @@ async def rollup_daily_stream(session: SessionDep, day: dt.date | None = None):
 
 @router.post("/rollup/weekly")
 async def rollup_weekly(session: SessionDep, week_start: dt.date | None = None):
-    """Roll up one ISO week (Mon-based). Defaults to the current week; the
-    systemd timer fires Sunday 23:59 so the default is the completed week."""
+    """Roll up one ISO week (Mon-based); defaults to the current UTC week."""
     week_start = week_start or monday_of(utc_now().date())
     week_end = week_start + dt.timedelta(days=7)
 
@@ -212,7 +217,7 @@ async def rollup_weekly(session: SessionDep, week_start: dt.date | None = None):
     for entry in entries:
         stored = await session.get(DailyScore, entry.date)
         metrics = await collect_daily_metrics(session, entry.date)
-        score = stored.final_score if stored else compute_daily_score(metrics).weighted_score
+        score = stored.final_score if stored else (await score_daily_metrics(session, metrics)).final_score
         scores.append(score)
         days.append(
             {
@@ -268,8 +273,6 @@ async def rollup_weekly(session: SessionDep, week_start: dt.date | None = None):
     week.misses = review.misses
     week.carried_action_items = review.carried_action_items
     session.add(week)
-    await session.commit()
-    await session.refresh(week)
     await index_document(
         session,
         f"weekly:{week.week_start.isoformat()}",
@@ -277,21 +280,27 @@ async def rollup_weekly(session: SessionDep, week_start: dt.date | None = None):
         "\n".join(filter(None, [week.wins, week.misses, week.carried_action_items])),
     )
     await session.commit()
+    await session.refresh(week)
     return week
 
 
 @router.post("/rollup/monthly")
-async def rollup_monthly(session: SessionDep, month: str | None = Query(default=None)):
+async def rollup_monthly(
+    session: SessionDep,
+    month: str | None = Query(default=None, pattern=r"^(previous|[0-9]{4}-[0-9]{2})$"),
+):
     """Roll up one month ('YYYY-MM', or 'previous'/None). Defaults to the
-    current month, or the previous one on the 1st (when the timer fires)."""
+    current month, or the previous one on the 1st."""
     today = utc_now().date()
     if month == "previous" or (month is None and today.day == 1):
         first_of_this = today.replace(day=1)
         last_of_prev = first_of_this - dt.timedelta(days=1)
         month = last_of_prev.strftime("%Y-%m")
+    elif month is None:
+        month = today.strftime("%Y-%m")
     try:
         year, mon = (int(p) for p in month.split("-"))
-        month_start = dt.date(year, mon, 1)
+        dt.date(year, mon, 1)
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=422, detail="month must be 'YYYY-MM' or 'previous'") from exc
 
@@ -338,10 +347,9 @@ async def rollup_monthly(session: SessionDep, month: str | None = Query(default=
     row.trend = trend
     row.narrative = review.narrative
     session.add(row)
-    await session.commit()
-    await session.refresh(row)
     await index_document(session, f"monthly:{row.month}", "monthly", row.narrative)
     await session.commit()
+    await session.refresh(row)
     return row
 
 
@@ -431,6 +439,7 @@ async def capture(body: CaptureRequest, session: SessionDep):
             entry.raw_markdown += block
             entry.updated_at = utc_now()
         session.add(entry)
+        await index_document(session, f"journal:{today.isoformat()}", "journal", entry.raw_markdown)
 
     await session.commit()
     for task in created:

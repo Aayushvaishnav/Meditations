@@ -1,8 +1,12 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { api, ApiError } from "@/api/client"
 import { sseEvents } from "@/lib/stream"
+import { createBackup } from "@/lib/backup"
+import { createDataExport } from "@/lib/data-export"
+import { startBrowserDownload, type FileDownloadResult } from "@/lib/file-download"
+import { tasksKey, beginTaskChange, rollbackTaskChange, settleTaskChange, invalidateTasks, reconcileTasks, withoutTaskTree } from "./task-cache"
 import type {
   AIConnectionTest,
   AiUsageView,
@@ -26,13 +30,20 @@ import type {
 } from "@/api/types"
 
 export const qk = {
-  tasks: ["tasks"] as const,
+  tasks: tasksKey,
   lists: ["lists"] as const,
   health: ["health"] as const,
 }
 
 export function useTasks() {
-  return useQuery({ queryKey: qk.tasks, queryFn: () => api.get<Task[]>("/tasks") })
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: qk.tasks,
+    queryFn: async ({ signal }) => {
+      const tasks = await api.get<Task[]>("/tasks")
+      return signal.aborted ? tasks : reconcileTasks(qc, tasks)
+    },
+  })
 }
 
 export function useLists() {
@@ -48,10 +59,12 @@ export function useHealth() {
   })
 }
 
-function patchTaskInCache(qc: ReturnType<typeof useQueryClient>, id: string, patch: Partial<Task>) {
-  qc.setQueryData<Task[]>(qk.tasks, (old) =>
-    (old ?? []).map((t) => (t.id === id ? { ...t, ...patch } : t)),
-  )
+function invalidateTelemetry(qc: ReturnType<typeof useQueryClient>) {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: ["journal-activity"] }),
+    qc.invalidateQueries({ queryKey: ["scores-daily"] }),
+    qc.invalidateQueries({ queryKey: ["insights"] }),
+  ])
 }
 
 export function useCreateTask() {
@@ -59,35 +72,42 @@ export function useCreateTask() {
   return useMutation({
     mutationFn: (input: TaskInput) => api.post<Task>("/tasks", input),
     onMutate: async (input) => {
-      await qc.cancelQueries({ queryKey: qk.tasks })
-      const prev = qc.getQueryData<Task[]>(qk.tasks)
       const now = new Date().toISOString()
+      const tempId = `temp-${crypto.randomUUID()}`
       const temp: Task = {
-        id: `temp-${crypto.randomUUID()}`,
+        id: tempId,
         list_id: input.list_id ?? null,
         parent_id: input.parent_id ?? null,
         title: input.title,
-        description: null,
+        description: input.description ?? null,
         priority: input.priority ?? 0,
         status: input.status ?? "todo",
         due_date: input.due_date ?? null,
         estimated_minutes: input.estimated_minutes ?? null,
         actual_minutes: 0,
         recurrence_rule: input.recurrence_rule ?? null,
+        recurrence_series_id: input.recurrence_rule ? tempId : null,
+        recurrence_occurrence: input.recurrence_rule ? 0 : null,
         tags: input.tags ?? [],
         order_index: Date.now(),
         completed_at: null,
         created_at: now,
         updated_at: now,
       }
-      qc.setQueryData<Task[]>(qk.tasks, (old) => [...(old ?? []), temp])
-      return { prev }
+      const change = await beginTaskChange(qc, tasks => [...tasks, temp])
+      return { change }
     },
     onError: (_err, _input, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.tasks, ctx.prev)
+      if (ctx) rollbackTaskChange(qc, ctx.change)
       toast.error("Couldn't create task")
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.tasks }),
+    onSettled: (data, _error, _input, ctx) => Promise.all([
+      settleTaskChange(qc, ctx?.change, data ? tasks => {
+        if (tasks.some(task => task.id === data.id)) return tasks
+        return [...tasks, data]
+      } : undefined),
+      invalidateTelemetry(qc),
+    ]),
   })
 }
 
@@ -97,19 +117,20 @@ export function useUpdateTask() {
     mutationFn: ({ id, patch }: { id: string; patch: Partial<Task> }) =>
       api.patch<Task>(`/tasks/${id}`, patch),
     onMutate: async ({ id, patch }) => {
-      await qc.cancelQueries({ queryKey: qk.tasks })
-      const prev = qc.getQueryData<Task[]>(qk.tasks)
       const extras: Partial<Task> = {}
       if (patch.status === "completed") extras.completed_at = new Date().toISOString()
       if (patch.status !== undefined && patch.status !== "completed") extras.completed_at = null
-      patchTaskInCache(qc, id, { ...patch, ...extras })
-      return { prev }
+      const change = await beginTaskChange(qc, tasks => tasks.map(task => task.id === id ? { ...task, ...patch, ...extras } : task))
+      return { change }
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.tasks, ctx.prev)
+      if (ctx) rollbackTaskChange(qc, ctx.change)
       toast.error("Couldn't update task")
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.tasks }),
+    onSettled: (_data, _error, _input, ctx) => Promise.all([
+      settleTaskChange(qc, ctx?.change),
+      invalidateTelemetry(qc),
+    ]),
   })
 }
 
@@ -118,16 +139,17 @@ export function useDeleteTask() {
   return useMutation({
     mutationFn: (id: string) => api.delete<void>(`/tasks/${id}`),
     onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: qk.tasks })
-      const prev = qc.getQueryData<Task[]>(qk.tasks)
-      qc.setQueryData<Task[]>(qk.tasks, (old) => (old ?? []).filter((t) => t.id !== id && t.parent_id !== id))
-      return { prev }
+      const change = await beginTaskChange(qc, tasks => withoutTaskTree(tasks, id))
+      return { change }
     },
     onError: (_err, _id, ctx) => {
-      if (ctx?.prev) qc.setQueryData(qk.tasks, ctx.prev)
+      if (ctx) rollbackTaskChange(qc, ctx.change)
       toast.error("Couldn't delete task")
     },
-    onSettled: () => qc.invalidateQueries({ queryKey: qk.tasks }),
+    onSettled: (_data, _error, _input, ctx) => Promise.all([
+      settleTaskChange(qc, ctx?.change),
+      invalidateTelemetry(qc),
+    ]),
   })
 }
 
@@ -136,10 +158,11 @@ export function useCreateSession() {
   return useMutation({
     mutationFn: (input: { task_id?: string | null; duration_minutes: number; session_type?: string }) =>
       api.post<Task>("/focus/sessions", input),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: qk.tasks })
-      qc.invalidateQueries({ queryKey: ["focus-summary"] })
-    },
+    onSettled: () => Promise.all([
+      invalidateTasks(qc),
+      qc.invalidateQueries({ queryKey: ["focus-summary"] }),
+      invalidateTelemetry(qc),
+    ]),
   })
 }
 
@@ -148,7 +171,7 @@ export function useDecomposeTask() {
   return useMutation({
     mutationFn: (taskId: string) => api.post<{ subtasks: Task[]; advice: string }>(`/agents/decompose`, { task_id: taskId }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: qk.tasks })
+      invalidateTasks(qc)
       toast.success(data.subtasks.length > 0 ? `Added ${data.subtasks.length} subtasks` : "No subtasks suggested", {
         description: data.advice || undefined,
       })
@@ -217,8 +240,45 @@ export function useSaveAppPrefs() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (input: { target_deep_work_hours?: number }) => api.put<AppPrefs>("/settings/app", input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-prefs"] }),
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ["app-prefs"] }),
+      qc.invalidateQueries({ queryKey: ["scores-daily"] }),
+    ]),
     onError: () => toast.error("Couldn't save preferences"),
+  })
+}
+
+export function useBackup() {
+  return useFileDownload(createBackup)
+}
+
+export function useDataExport() {
+  return useFileDownload(createDataExport)
+}
+
+function useFileDownload(create: () => Promise<FileDownloadResult>) {
+  const active = useRef(false)
+  const download = useRef<{ kind: "none" } | { kind: "active"; release: () => void }>({ kind: "none" })
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+      if (download.current.kind === "active") download.current.release()
+      download.current = { kind: "none" }
+    }
+  }, [])
+  return useMutation({
+    mutationFn: async () => {
+      const result = await create()
+      if (result.kind !== "download") return result
+      if (!active.current) return { kind: "left-view" } as const
+      const release = startBrowserDownload(result.blob, result.filename)
+      if (download.current.kind === "active") download.current.release()
+      download.current = { kind: "active", release }
+      return { kind: "download-started" } as const
+    },
+    retry: false,
+    gcTime: 0,
   })
 }
 
@@ -254,9 +314,10 @@ export function useCapture() {
   return useMutation({
     mutationFn: (text: string) => api.post<CaptureResult>("/agents/capture", { text }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: qk.tasks })
+      invalidateTasks(qc)
       qc.invalidateQueries({ queryKey: ["journal"] })
       qc.invalidateQueries({ queryKey: ["journal-days"] })
+      void invalidateTelemetry(qc)
       toast.success(`Captured ${data.tasks.length} task${data.tasks.length === 1 ? "" : "s"}`, {
         description: data.journal_snippet ? "Snippet added to today's journal." : undefined,
       })
@@ -381,22 +442,19 @@ export function useDeleteList() {
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: qk.lists })
       const prevLists = qc.getQueryData<TaskList[]>(qk.lists)
-      const prevTasks = qc.getQueryData<Task[]>(qk.tasks)
+      const change = await beginTaskChange(qc, tasks => tasks.map(task => task.list_id === id ? { ...task, list_id: null } : task))
       qc.setQueryData<TaskList[]>(qk.lists, (old) => (old ?? []).filter((l) => l.id !== id))
-      qc.setQueryData<Task[]>(qk.tasks, (old) =>
-        (old ?? []).map((t) => (t.list_id === id ? { ...t, list_id: null } : t)),
-      )
-      return { prevLists, prevTasks }
+      return { prevLists, change }
     },
     onError: (_err, _id, ctx) => {
       if (ctx?.prevLists) qc.setQueryData(qk.lists, ctx.prevLists)
-      if (ctx?.prevTasks) qc.setQueryData(qk.tasks, ctx.prevTasks)
+      if (ctx) rollbackTaskChange(qc, ctx.change)
       toast.error("Couldn't delete list")
     },
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: qk.lists })
-      qc.invalidateQueries({ queryKey: qk.tasks })
-    },
+    onSettled: (_data, _error, _id, ctx) => Promise.all([
+      qc.invalidateQueries({ queryKey: qk.lists }),
+      settleTaskChange(qc, ctx?.change),
+    ]),
   })
 }
 

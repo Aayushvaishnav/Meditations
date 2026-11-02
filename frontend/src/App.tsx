@@ -77,7 +77,7 @@ export default function App() {
                   <TaskListSkeleton />
                 )
               ) : view === "calendar" ? (
-                <CalendarView tasks={tasks.data ?? []} />
+                <CalendarView tasks={tasks.data ?? []} scope={scope} search={search} />
               ) : view === "board" ? (
                 <KanbanBoard tasks={tasks.data ?? []} search={search} />
               ) : (

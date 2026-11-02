@@ -15,6 +15,8 @@ import {
   XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { BackupSettings } from "@/components/backup-settings"
+import { ExportSettings } from "@/components/export-settings"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -396,6 +398,8 @@ export function SettingsView() {
           <UsageCard />
           <PrefsCard />
         </div>
+        <BackupSettings />
+        <ExportSettings />
         <PromptsCard />
         <div className="grid gap-4 md:grid-cols-2">
           <AppearanceCard />
