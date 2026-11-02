@@ -30,7 +30,17 @@ def _watch_parent() -> None:
 
 
 def main() -> None:
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "restore":
+        from app.recovery import main as recovery_main
+
+        recovery_main()
+        return
+
     import uvicorn
+
+    os.environ.setdefault("JOURNAL_SCHEDULED_REVIEWS", "true")
 
     from app.main import app
 

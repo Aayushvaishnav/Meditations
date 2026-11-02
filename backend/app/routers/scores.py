@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Query
 from sqlmodel import SQLModel
@@ -8,12 +9,10 @@ from sqlmodel import SQLModel
 from app.models import DailyScore
 from app.routers.deps import SessionDep
 from app.scoring import (
-    DEFAULT_TARGET_DEEP_WORK_HOURS,
     DailyMetrics,
     ScoreBreakdown,
-    compute_daily_score,
 )
-from app.routers.preferences import get_effective_target_hours
+from app.score_service import score_daily_metrics
 from app.telemetry import collect_daily_metrics
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
@@ -29,12 +28,21 @@ class DailyScoreResponse(SQLModel):
     final_score: float
     target_deep_work_hours: float
     metrics: DailyMetrics
+    score_basis: Literal["live", "review_snapshot"] = "live"
+    saved_review_score: float | None = None
     persisted: bool = False
     feedback: str | None = None
     insight: str | None = None
 
 
-def _response(day: date, breakdown: ScoreBreakdown, persisted: bool, feedback: str | None, insight: str | None) -> DailyScoreResponse:
+def _response(
+    day: date,
+    breakdown: ScoreBreakdown,
+    persisted: bool,
+    feedback: str | None,
+    insight: str | None,
+    saved_review_score: float | None = None,
+) -> DailyScoreResponse:
     return DailyScoreResponse(
         date=day,
         task_score=breakdown.task_score,
@@ -46,6 +54,7 @@ def _response(day: date, breakdown: ScoreBreakdown, persisted: bool, feedback: s
         target_deep_work_hours=breakdown.target_deep_work_hours,
         metrics=breakdown.metrics,
         persisted=persisted,
+        saved_review_score=saved_review_score,
         feedback=feedback,
         insight=insight,
     )
@@ -62,12 +71,16 @@ async def get_daily_score(
     Persistence of daily_scores rows happens with the daily agent (Phase 4).
     """
     metrics = await collect_daily_metrics(session, day)
-    target = target_hours if target_hours is not None else await get_effective_target_hours(session)
 
     stored = await session.get(DailyScore, day)
     if stored is not None:
-        breakdown = compute_daily_score(metrics, target_hours=target, llm_nudge=stored.llm_nudge)
-        return _response(day, breakdown, persisted=True, feedback=stored.feedback, insight=stored.insight)
+        breakdown = await score_daily_metrics(
+            session, metrics, target_hours=target_hours, llm_nudge=stored.llm_nudge
+        )
+        return _response(
+            day, breakdown, persisted=True, feedback=stored.feedback,
+            insight=stored.insight, saved_review_score=stored.final_score,
+        )
 
-    breakdown = compute_daily_score(metrics, target_hours=target)
+    breakdown = await score_daily_metrics(session, metrics, target_hours=target_hours)
     return _response(day, breakdown, persisted=False, feedback=None, insight=None)

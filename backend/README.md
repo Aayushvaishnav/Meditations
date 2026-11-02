@@ -39,10 +39,24 @@ score = 0.40*task + 0.35*focus + 0.15*habit + clamp(llm_nudge, ±10)
 ```
 
 - `task = min(100, done/max(planned,1)*100)` — planned = due that day (incl. overdue, still open) or undated-but-completed that day; canceled never counts.
-- `focus = min(100, hours/target*100)` — default target 4h, override with `?target_hours=`.
+- `focus = min(100, hours/target*100)` — uses the target configured in Settings (4h by default); `?target_hours=` overrides only that live request.
 - `habit = done/scheduled*100` — scheduled = `daily` habits existing by that day.
 
 A component the user has not opted into is **neutral (100), not punitive**: no habits configured → habit 100; `target_hours=0` → focus 100. Weights sum to 0.90; the remaining 10 points come from the (Phase 4) LLM nudge. The endpoint is live-only for now — `daily_scores` persistence happens with the daily agent.
+
+### Focus targets and saved reviews
+
+Changing the focus target in Settings refreshes live day scores, including past
+days. Saved AI reviews retain the metrics and target used when they ran. The
+journal card displays the current live score and saved review score separately.
+Run the review again to replace its saved score using current activity and target.
+Weekly reviews use saved daily scores when available; other days use the current
+target. Existing weekly and monthly reviews change only when re-run.
+
+The live score API returns `score_basis: "live"`; daily review responses return
+`score_basis: "review_snapshot"`. Both expose `saved_review_score` when a review
+exists. `persisted` means a saved review exists, even when its score differs from
+the recalculated live value.
 
 ## AI provider config (plan §3.2)
 
@@ -76,10 +90,10 @@ deterministic.
   weekly/monthly summaries. Requires a journal entry for the day.
 - `POST /api/agents/rollup/weekly[?week_start=YYYY-MM-DD]` — ISO week rollup from
   daily scores/metadata (raw journals never read again); stores `weekly_summaries`.
-  Defaults to the current week (the timer fires Sunday 23:59).
+  Defaults to the current UTC week; scheduled runs pass an explicit closed week.
 - `POST /api/agents/rollup/monthly[?month=YYYY-MM|previous]` — month narrative from
   that month's weekly rollups; stores `monthly_summaries`. Defaults to the current
-  month, or the previous one on the 1st (when the timer fires).
+  month, or the previous one on the 1st.
 - `POST /api/agents/decompose` `{task_id}` — persists AI-planned subtasks under a task.
 - `POST /api/agents/capture` `{text}` — extracts tasks with due dates from free text
   and appends a snippet to today's journal.
@@ -101,25 +115,216 @@ the prompt/output-schema wiring.
   app silently degrades to keyword search. Vectors only count when
   `distance <= 1.0` (cosine ≥ 0.5) so small indexes never fabricate matches.
 
-Indexing happens automatically on journal save/delete and weekly/monthly
-rollups. `POST /api/search/reindex` rebuilds everything (backfills vectors too);
-`GET /api/search/status` reports what's active. The embedding model (~90 MB)
-downloads on first use into `~/.cache/fastembed`.
+Journal saves/deletes, captured journal snippets, and weekly/monthly rollups
+update their source data and keyword index in the same transaction. A storage
+failure rolls back the save. An unavailable embedding model still allows keyword
+search; missing vectors retry at startup or through `POST /api/search/reindex`.
+Startup also repairs stale keyword content and removes deleted-document results.
+Reindex replaces the indexes from current source data, removing orphan records.
+Both operations commit their index changes atomically.
 
-## Scheduled rollups (systemd, user-level)
+`GET /api/search/status` reports whether the vector extension is available. The
+reindex response reports `semantic: true` when at least one current vector was
+built. The embedding model (~90 MB) downloads on first use into
+`~/.cache/fastembed`.
+
+## Scheduled rollups
+
+The packaged desktop backend runs a database-local review worker while the app
+is open. It uses the same database and configured AI provider as interactive
+reviews, independent of the sidecar's loopback port. Standalone/development
+backends default to scheduling off. To opt in:
 
 ```bash
-./systemd/install.sh   # copies units to ~/.config/systemd/user, enables timers
+JOURNAL_SCHEDULED_REVIEWS=true uv run uvicorn app.main:app
 ```
 
-Daily 23:30 · weekly Sunday 23:59 · monthly on the 1st 00:05 (covers the previous
-month). Each timer POSTs to the local API; rollups only run while the backend is
-up. Inspect with `systemctl --user list-timers 'journal-*'`.
+Set `JOURNAL_SCHEDULED_REVIEWS=false` to disable scheduling in the packaged app.
+Run one backend process per database (one uvicorn worker). The worker checks at
+startup and every minute, catches up missed periods, and is cancelled before
+the database closes. Closing the desktop app pauses scheduling.
 
+Periods use **UTC**, matching journal telemetry, instead of the old host-local
+systemd clock. Daily reviews cover journal days before today. Weekly reviews
+cover closed Monday-to-Monday weeks. Monthly reviews retain the API's existing
+week-start ownership: a week belongs to the month containing its Monday. A
+month becomes eligible only after its final assigned week closes; January 2026,
+for example, is eligible on February 2. Every invocation passes an explicit day,
+week start, or month, so delayed execution keeps its intended target.
+
+Schema v4 stores `review_jobs` with `pending`, `completed`, or `skipped` state.
+Catch-up queues historical journal days and their parent periods, then runs
+jobs by their UTC closing date, with daily → weekly → monthly ordering at a
+shared boundary. Earlier summaries are available as context for later reviews. Existing saved reviews satisfy a job,
+including recovery after an output commit interrupted before ledger completion.
+A failed job stays pending, blocks later work for that pass, and retries next
+minute. A source removed before execution is recorded as skipped. Empty periods
+without source data produce no AI calls. Later edits, source restoration, or
+manual review deletion do not reopen completed/skipped jobs; use the manual
+review action to refresh snapshots. First launch can review all previously
+unreviewed history and incur the corresponding configured-provider cost.
+
+If you previously installed the systemd timers, retire their installed copies
+before using this version:
+
+```bash
+./systemd/install.sh   # disables/removes the legacy user timers and services
+```
+
+The legacy units are no longer shipped. Their old port-8000 HTTP calls could
+reach a separate development database; the new worker makes no HTTP requests.
+
+
+## Database backups
+
+`POST /api/backup` returns a complete SQLite file as an attachment
+(`application/vnd.sqlite3`, `Cache-Control: no-store`). No request body or
+filesystem path is needed. For example, against a standalone backend:
+
+```bash
+curl --fail --request POST http://127.0.0.1:8000/api/backup --output journal-backup.db
+```
+
+Choose an output path separate from the live database. The Settings action uses
+the currently connected backend, including the packaged sidecar's ephemeral
+port. Desktop saving uses a native dialog and exclusive file creation, preserving
+existing files. Browser saving uses the browser's download manager.
+
+`app/backup.py` uses the active engine's aiosqlite connection and SQLite's online
+backup API. The snapshot includes committed WAL data, schema version, source
+records, associations, settings, review-job state, and derived search indexes.
+It does not checkpoint or copy the live main file. The route creates a private
+temporary directory and removes it after delivery or failure. A standalone
+snapshot is readable with SQLite; full-text/vector queries may require the same
+extensions as the app.
+
+Backups include credentials stored in `app_settings`; the file is unencrypted.
+Do not upload it as an ordinary diagnostic artifact. Environment configuration
+and external embedding caches are excluded. See the root README for default
+packaged/development paths and `JOURNAL_DB_PATH` overrides. See Offline recovery
+below for restore and automatic pre-upgrade checkpoints.
+
+Ordinary endpoint tests use the in-memory fixture. The WAL concurrency regression
+uses an isolated database under pytest's `tmp_path`, because SQLite WAL mode
+requires a file database; it never opens user data. In-memory `StaticPool`
+backups require a quiescent shared connection; concurrent writes are supported
+on the application's file-backed database with independent pooled connections.
+
+## Portable data export
+
+`POST /api/export` downloads a ZIP (`application/zip`, `Cache-Control: no-store`)
+with no request body or filesystem path. For a standalone backend:
+
+```bash
+curl --fail --request POST http://127.0.0.1:8000/api/export --output journal-export.zip
+```
+
+Choose a new output path. Settings uses the active backend URL, including the
+packaged sidecar, with browser downloads or an exclusive native save dialog.
+Unlike full SQLite backups, portable exports omit the entire `app_settings`
+table, AI usage, review jobs, and derived search data. User-authored text is
+preserved verbatim, including any sensitive information it contains.
+
+`app/data_export.py` defines explicit column allowlists for nine collections:
+`lists`, `tasks`, `focus_sessions`, `habits`, `habit_logs`, `journal_entries`,
+`daily_scores`, `weekly_summaries`, and `monthly_summaries`. New database columns
+are opt-in to the export format. One connection executes an explicit SQLite
+`BEGIN` before its first SELECT; every collection is materialized in primary-key
+order within that read transaction. This pins a consistent snapshot even in
+legacy sqlite transaction mode. No source data is written, no scores are
+recalculated, and no embedding or AI calls run.
+
+Archive format `journal-data-export`, version 1:
+
+| Member | Contents |
+|---|---|
+| `README.md` | Versioned field guide embedded by the serializer |
+| `manifest.json` | Format/version, UTC assembly time, per-collection counts |
+| `data.json` | UTF-8 JSON collections, including empty arrays |
+| `journals/YYYY-MM-DD.md` | Original UTF-8 Markdown; linked from `markdown_file` in journal metadata |
+
+IDs and foreign keys are preserved opaque strings. Timestamps retain fractional
+seconds and gain explicit UTC `Z`; dates and month keys retain their stored
+labels. Optional nulls remain null; tags remain arrays and flags remain booleans.
+Journal content is in Markdown instead of duplicated in JSON. Rating-only
+entries have empty files. Review rubric JSON remains a stored string, and
+historical scores and journal metrics remain saved snapshots. Current `due_date`
+values, including synthetic 09:00 local fallbacks, are exported without inferring
+all-day intent or adding separate scheduling concepts.
+
+The route owns a private temporary directory and removes it after delivery,
+serialization/response failure, or cancellation. No SQLite snapshot is included
+in the ZIP. The archive is unencrypted; it is not a restorable database and has
+no import endpoint. Regression tests use in-memory fixtures except the isolated
+`tmp_path` WAL writer test proving related records come from one snapshot.
+
+## Schema upgrades and recurring tasks
+
+Schema upgrades run automatically before the API starts. Fresh and existing
+unversioned databases reach schema v4 through the same versioned migrations.
+Version 3 tracks pending and ready search vectors for recovery after offline
+embedding or extension failures.
+A failed upgrade leaves the pending changes rolled back and reports the cause;
+resolve it and restart the backend. Opening a database written by a newer app
+requires upgrading the app.
+
+### Offline recovery
+
+Stop the backend and quit the desktop tray process before restoring. From
+`backend/`:
+
+```bash
+uv run python -m app.recovery restore /path/to/backup.db --database /path/to/journal.db
+```
+
+The bundled sidecar also accepts `restore BACKUP --database DESTINATION`; this
+mode does not start uvicorn, scheduling, or the parent-process watcher. Always
+specify the intended database, rather than relying on environment defaults.
+
+`app/recovery.py` stages a SQLite online snapshot, validates integrity, foreign
+keys, and the versioned source schema, then migrates the staged copy. The input
+backup is not upgraded in place. The current destination gets a private online
+checkpoint before WAL checkpointing and atomic replacement. Restore prints its
+checkpoint path; restore that file with the same command to undo replacement.
+Search reconciliation runs on the next normal startup; it rebuilds missing derived
+indexes without changing source data. Backups newer than this app are refused.
+
+Before migrations of an existing file database, a verified checkpoint is saved
+under the sibling `recovery/` directory and logged. This happens under the startup
+writer transaction, before DDL. Failure to save the checkpoint aborts startup.
+Pending migrations still roll back atomically on failure; retry after resolving
+the reported problem, or use the offline command to restore the checkpoint.
+Fresh databases, in-memory tests, and current schemas skip checkpoints. There is
+no automatic retention cleanup. Checkpoints contain credentials and private data;
+files use mode `0600` and their directory uses `0700` on Unix.
+
+`app/database_lock.py` holds a per-canonical-path OS advisory lock from engine
+creation through disposal. Startup failures dispose connections and release it.
+Offline recovery takes the same lock; competing backends or restores fail rather
+than replacing an open database. The persistent `.lock` file is not a stale PID
+marker and must not be removed. Older versions, hard-link aliases, and external
+SQLite clients do not participate: stop them before restore. Do not manually
+remove `-wal` or `-shm` files. Lock behavior is tested on Linux; packaged restore
+and Windows locking still need native smoke verification.
+
+Completing a recurring task keeps its completed history and creates the next
+occurrence. Separate tasks can have the same name, rule, and due time without
+suppressing each other. Recurring task responses include server-managed
+`recurrence_series_id` and zero-based `recurrence_occurrence` fields. Renaming,
+moving, or rescheduling an occurrence preserves its identity. Reopening and
+recompleting a task reuses its existing successor, including a completed or
+canceled successor, instead of creating another copy. Edits apply to that task
+only, instead of propagating through the series.
+
+The upgrade treats each existing recurring row as a separate series because
+older databases did not record lineage. It preserves the rows instead of
+attempting to merge similar tasks or repair past duplicate/missing occurrences.
+Deleting a successor permits regeneration if its predecessor is later reopened
+and completed again. Supported rules remain DAILY/WEEKLY, INTERVAL, and BYDAY.
 
 ## Known limitations / deferred
 
 - Timezone-aware scheduling (store local + convert) is deferred until the frontend lands; naive-UTC is the interim contract.
-- `recurrence_rule` is stored but not expanded yet (needs an RRULE expansion pass in the task UI, Phase 2).
+- Recurrence supports DAILY/WEEKLY rules only; unsupported rules are stored without generating successors.
 - Journal routes (TipTap content, mood/energy) are Phase 3; the tables already exist.
 - `daily_scores`/`weekly_summaries`/`monthly_summaries` are written by the Phase 4 agents; scoring is live-computed until then.

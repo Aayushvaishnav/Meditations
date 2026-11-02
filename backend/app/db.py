@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.database_lock import DatabaseLock
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
+_database_lock: DatabaseLock | None = None
 
 
 def _is_memory(url: str) -> bool:
@@ -19,13 +22,22 @@ def _is_memory(url: str) -> bool:
 
 def init_engine(db_url: str) -> AsyncEngine:
     """(Re)create the global engine. Called on app startup and by tests."""
-    global _engine, _sessionmaker
+    global _engine, _sessionmaker, _database_lock
 
-    if db_url.startswith("sqlite") and not _is_memory(db_url):
-        Path(db_url.split("///", 1)[-1]).parent.mkdir(parents=True, exist_ok=True)
-
+    if _database_lock is not None:
+        raise RuntimeError("Dispose the current database engine before replacing it")
     kwargs: dict = {"poolclass": StaticPool} if _is_memory(db_url) else {}
     engine = create_async_engine(db_url, **kwargs)
+    if engine.url.get_backend_name() == "sqlite" and not _is_memory(db_url):
+        database = engine.url.database
+        if database:
+            lock = DatabaseLock(Path(database))
+            try:
+                lock.__enter__()
+            except BaseException:
+                engine.sync_engine.dispose()
+                raise
+            _database_lock = lock
 
     @event.listens_for(engine.sync_engine, "connect")
     def _sqlite_pragmas(dbapi_connection, _connection_record):  # noqa: ANN001
@@ -75,17 +87,29 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    from app import models  # noqa: F401  (registers tables on the metadata)
     from app import search
+    from app.migrations import migrate
 
+    await migrate(get_engine())
     async with get_engine().begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
         await search.init_search(conn)
 
 
 async def dispose_engine() -> None:
-    global _engine, _sessionmaker
+    global _engine, _sessionmaker, _database_lock
+    cancelled = False
     if _engine is not None:
-        await _engine.dispose()
+        worker = asyncio.create_task(_engine.dispose())
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                cancelled = True
+        worker.result()
     _engine = None
     _sessionmaker = None
+    if _database_lock is not None:
+        _database_lock.__exit__()
+        _database_lock = None
+    if cancelled:
+        raise asyncio.CancelledError

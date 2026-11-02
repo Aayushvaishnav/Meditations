@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
+
+from app.routers import tasks as task_routes
 
 
 def make_list(client, name="Inbox") -> dict:
@@ -82,17 +86,28 @@ def test_completion_stamps_completed_at(client):
     assert r.json()["completed_at"] is None
 
 
-def test_task_filters(client):
+@pytest.mark.parametrize("now", [datetime(2026, 9, 12), datetime(2030, 1, 1)])
+def test_task_filters(client, monkeypatch, now):
+    monkeypatch.setattr(task_routes, "utc_now", lambda: now)
     t1 = make_task(client, title="Overdue", due_date="2026-09-10T10:00:00Z", tags=["work"])
-    t2 = make_task(client, title="Future", due_date="2026-09-15T10:00:00Z", tags=["work", "deep"])
-    t3 = make_task(client, title="Done", tags=[])
-    client.patch(f"/api/tasks/{t3['id']}", json={"status": "completed"})
+    t2 = make_task(client, title="Future", due_date=(now + timedelta(days=1)).isoformat() + "Z", tags=["work", "deep"])
+    t3 = make_task(client, title="Done", due_date="2026-09-10T10:00:00Z", tags=[])
+    assert client.patch(f"/api/tasks/{t3['id']}", json={"status": "completed"}).status_code == 200
+    canceled = make_task(client, title="Canceled", due_date="2026-09-10T10:00:00Z", status="canceled")
+    boundary = make_task(client, title="Due now", due_date=now.isoformat() + "Z")
+    active = make_task(client, title="In progress", due_date="2026-09-10T10:00:00Z", status="in_progress")
+    make_task(client, title="Unscheduled")
 
     overdue = client.get("/api/tasks", params={"overdue": True}).json()
-    assert [t["id"] for t in overdue] == [t1["id"]]
+    assert {t["id"] for t in overdue} == {t1["id"], active["id"]}
 
     by_date = client.get("/api/tasks", params={"due_before": "2026-09-12T00:00:00Z"}).json()
-    assert {t["id"] for t in by_date} == {t1["id"]}
+    assert {t["id"] for t in by_date} == {t1["id"], t3["id"], canceled["id"], active["id"]}
+
+    before_boundary = client.get("/api/tasks", params={"due_before": now.isoformat() + "Z"}).json()
+    assert {t["id"] for t in before_boundary} == {t1["id"], t3["id"], canceled["id"], active["id"]}
+    from_boundary = client.get("/api/tasks", params={"due_after": now.isoformat() + "Z"}).json()
+    assert {t["id"] for t in from_boundary} == {boundary["id"], t2["id"]}
 
     by_tag = client.get("/api/tasks", params={"tag": "deep"}).json()
     assert [t["id"] for t in by_tag] == [t2["id"]]

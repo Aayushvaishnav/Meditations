@@ -6,16 +6,7 @@ import { GROUP_LABELS, groupOf, sortTasks, type TaskGroup } from "@/lib/dates"
 import { useUi, type SmartView } from "@/stores/ui"
 import { Button } from "@/components/ui/button"
 import { TaskItem } from "@/components/task-item"
-import { matchTaskSearch } from "@/lib/search"
-
-const SECTIONS_BY_SCOPE: Record<SmartView | "list", TaskGroup[]> = {
-  today: ["overdue", "today"],
-  overdue: ["overdue"],
-  upcoming: ["tomorrow", "upcoming"],
-  all: ["overdue", "today", "tomorrow", "upcoming", "nodate"],
-  completed: ["completed"],
-  list: ["overdue", "today", "tomorrow", "upcoming", "nodate"],
-}
+import { selectScopedTasks, TASK_GROUPS_BY_SCOPE } from "@/lib/task-filter"
 
 const EMPTY_MESSAGES: Record<string, string> = {
   today: "Nothing due today. Enjoy the calm.",
@@ -37,10 +28,8 @@ export function TaskSections({
   search: string
   lists: TaskList[]
 }) {
-  const { sections, hasAny } = useMemo(() => {
-    const scopeFilter = (t: Task) =>
-      scope.kind === "list" ? t.list_id === scope.id : true
-    const visible = tasks.filter((t) => scopeFilter(t) && matchTaskSearch(t, search))
+  const { sections, hasAny, visible } = useMemo(() => {
+    const visible = selectScopedTasks(tasks, scope, search)
     const byId = new Map(visible.map((t) => [t.id, t]))
 
     const grouped = new Map<TaskGroup, Task[]>()
@@ -54,7 +43,7 @@ export function TaskSections({
     }
     for (const bucket of grouped.values()) bucket.sort(sortTasks)
 
-    const sections = SECTIONS_BY_SCOPE[scope.kind === "list" ? "list" : scope.id]
+    const sections = TASK_GROUPS_BY_SCOPE[scope.kind === "list" ? "list" : scope.id]
       .map((g) => ({ group: g, tasks: grouped.get(g) ?? [] }))
       .filter((s) => s.tasks.length > 0)
 
@@ -64,7 +53,7 @@ export function TaskSections({
     }
 
     const hasAny = visible.length > 0
-    return { sections, hasAny }
+    return { sections, hasAny, visible }
   }, [tasks, scope, search])
 
   if (!hasAny) {
@@ -118,7 +107,7 @@ export function TaskSections({
               >
                 <TaskItem
                   task={task}
-                  children={tasks.filter((t) => t.parent_id === task.id)}
+                  children={visible.filter((t) => t.parent_id === task.id)}
                   lists={listBadges}
                   showList={scope.kind === "smart" && (scope.id === "all" || scope.id === "today")}
                 />

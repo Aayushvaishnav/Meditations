@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,8 @@ from app.config import get_app_settings
 from app.routers import (
     agents,
     ai_settings,
+    backup,
+    data_export,
     focus,
     habits,
     insights,
@@ -27,13 +30,24 @@ async def lifespan(_: FastAPI):
     if not db.engine_initialized():  # tests pre-initialise an in-memory engine
         settings = get_app_settings()
         db.init_engine(f"sqlite+aiosqlite:///{settings.journal_db_path}")
-    await db.init_db()
-    from app import search
+    worker = None
+    try:
+        await db.init_db()
+        from app import search
 
-    async with db.get_sessionmaker()() as session:
-        await search.backfill_missing(session)  # index docs written pre-search
-    yield
-    await db.dispose_engine()
+        async with db.get_sessionmaker()() as session:
+            await search.backfill_missing(session)
+        if get_app_settings().journal_scheduled_reviews:
+            from app.review_scheduler import serve
+
+            worker = asyncio.create_task(serve(db.get_sessionmaker()))
+        yield
+    finally:
+        if worker is not None:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+        await db.dispose_engine()
 
 
 app = FastAPI(title="Journal API", version="0.1.0", lifespan=lifespan)
@@ -48,6 +62,8 @@ app.add_middleware(
 )
 
 for router in (
+    backup.router,
+    data_export.router,
     lists.router,
     tasks.router,
     focus.router,

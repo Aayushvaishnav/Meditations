@@ -10,12 +10,10 @@ from sqlmodel import SQLModel
 from app.ai_factory import create_agent_model, describe_ai_error, load_ai_settings
 from app.models import AppSetting
 from app.routers.deps import SessionDep
+from app.score_service import TARGET_HOURS_KEY, get_effective_target_hours
 from app.util import utc_now
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
-
-TARGET_HOURS_KEY = "target_deep_work_hours"
-DEFAULT_TARGET_HOURS = 4.0
 
 
 # --- AI provider configuration (masked; the key itself never leaves the server) ---
@@ -65,12 +63,7 @@ class AppPrefs(SQLModel):
 
 @router.get("/app", response_model=AppPrefs)
 async def get_prefs(session: SessionDep):
-    row = await session.get(AppSetting, TARGET_HOURS_KEY)
-    try:
-        target = float(row.value) if row else DEFAULT_TARGET_HOURS
-    except ValueError:
-        target = DEFAULT_TARGET_HOURS
-    return AppPrefs(target_deep_work_hours=target)
+    return AppPrefs(target_deep_work_hours=await get_effective_target_hours(session))
 
 
 class AppPrefsUpdate(BaseModel):
@@ -89,13 +82,3 @@ async def set_prefs(payload: AppPrefsUpdate, session: SessionDep):
         session.add(row)
         await session.commit()
     return await get_prefs(session)
-
-
-async def get_effective_target_hours(session: SessionDep) -> float:
-    row = await session.get(AppSetting, TARGET_HOURS_KEY)
-    if row is not None:
-        try:
-            return max(0.01, float(row.value))
-        except ValueError:
-            pass
-    return DEFAULT_TARGET_HOURS

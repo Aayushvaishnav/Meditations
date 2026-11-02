@@ -7,10 +7,10 @@ from sqlalchemy import text
 from sqlmodel import func, select
 
 from app.models import Task, TaskList
-from app.recurrence import next_occurrence
+from app.recurring_tasks import ensure_recurrence_identity, spawn_successor
 from app.routers.deps import SessionDep
 from app.schemas import TaskCreate, TaskReorder, TaskStatus, TaskUpdate
-from app.util import new_id, normalize_dt, utc_now
+from app.util import normalize_dt, utc_now
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -99,6 +99,7 @@ async def create_task(payload: TaskCreate, session: SessionDep):
     data = payload.model_dump()
     data["order_index"] = await _next_order_index(session, payload.list_id, payload.parent_id)
     task = Task(**data)
+    ensure_recurrence_identity(task)
     session.add(task)
     await session.commit()
     await session.refresh(task)
@@ -141,39 +142,9 @@ async def update_task(task_id: str, payload: TaskUpdate, session: SessionDep):
         setattr(task, key, value)
     task.updated_at = utc_now()
 
-    # recurring task completed -> spawn its next occurrence (TickTick-style);
-    # the finished instance stays completed so telemetry/history is preserved
-    if completing and task.recurrence_rule:
-        base = task.due_date or task.completed_at
-        next_due = next_occurrence(task.recurrence_rule, base or utc_now())
-        # un-complete/re-complete cycles must not stack duplicate instances
-        duplicate = (
-            await session.exec(
-                select(Task).where(
-                    Task.title == task.title,
-                    Task.recurrence_rule == task.recurrence_rule,
-                    Task.status.in_(["todo", "in_progress"]),
-                    Task.due_date == next_due,
-                    Task.id != task.id,
-                )
-            )
-        ).first() if next_due is not None else None
-        if next_due is not None and duplicate is None:
-            session.add(
-                Task(
-                    id=new_id(),
-                    list_id=task.list_id,
-                    parent_id=task.parent_id,
-                    title=task.title,
-                    description=task.description,
-                    priority=task.priority,
-                    due_date=next_due,
-                    estimated_minutes=task.estimated_minutes,
-                    recurrence_rule=task.recurrence_rule,
-                    tags=task.tags,
-                    order_index=task.order_index + 1000.0,
-                )
-            )
+    ensure_recurrence_identity(task)
+    if completing:
+        await spawn_successor(session, task)
 
     await session.commit()
     await session.refresh(task)

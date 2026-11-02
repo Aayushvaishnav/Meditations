@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as Date
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.util import new_id, utc_now
@@ -22,6 +22,9 @@ class TaskList(SQLModel, table=True):
 
 class Task(SQLModel, table=True):
     __tablename__ = "tasks"
+    __table_args__ = (
+        Index("uq_task_recurrence_occurrence", "recurrence_series_id", "recurrence_occurrence", unique=True),
+    )
 
     id: str = Field(default_factory=new_id, primary_key=True)
     list_id: str | None = Field(default=None, foreign_key="lists.id", ondelete="SET NULL", index=True)
@@ -33,7 +36,9 @@ class Task(SQLModel, table=True):
     due_date: datetime | None = Field(default=None, index=True)
     estimated_minutes: int | None = None
     actual_minutes: int = 0
-    recurrence_rule: str | None = None  # RRULE string; expansion lands with the task UI
+    recurrence_rule: str | None = None
+    recurrence_series_id: str | None = None
+    recurrence_occurrence: int | None = None
     tags: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     order_index: float = 0.0
     completed_at: datetime | None = Field(default=None, index=True)
@@ -142,3 +147,18 @@ class AiUsage(SQLModel, table=True):
     input_tokens: int = 0
     output_tokens: int = 0
     duration_ms: int = 0
+
+
+class SearchVectorState(SQLModel, table=True):
+    __tablename__ = "search_vector_state"
+
+    doc_id: str = Field(primary_key=True)
+    state: str  # pending|ready; updated in the source/FTS transaction
+
+
+class ReviewJob(SQLModel, table=True):
+    __tablename__ = "review_jobs"
+
+    kind: str = Field(primary_key=True)  # daily|weekly|monthly
+    period: str = Field(primary_key=True)  # UTC day, Monday, or YYYY-MM
+    state: str  # pending|completed|skipped

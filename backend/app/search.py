@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 import sqlite_vec
 from sqlalchemy import text
@@ -34,6 +35,8 @@ VEC_DDL = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS vec_entries USING vec0("
     "doc_id TEXT PRIMARY KEY, embedding float[384])"
 )
+
+logger = logging.getLogger(__name__)
 
 _vec_ready = False
 _model = None
@@ -76,6 +79,14 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     return [vec.tolist() for vec in model.embed(truncated)]
 
 
+def _optional_embeddings(texts: list[str]) -> list[list[float]] | None:
+    try:
+        return embed_texts(texts)
+    except Exception:  # noqa: BLE001 — optional inference must not disable FTS
+        logger.warning("Semantic embeddings unavailable; using FTS only", exc_info=True)
+        return None
+
+
 def _serialize(vec: list[float]) -> bytes:
     return sqlite_vec.serialize_float32(vec)
 
@@ -107,16 +118,19 @@ async def _execute(session: AsyncSession, sql: str, params: dict | None = None):
 
 
 async def index_document(session: AsyncSession, doc_id: str, kind: str, content: str) -> None:
-    """Upsert one document into FTS (always) and the vector index (when possible)."""
+    """Write indexes and vector freshness in the caller's source transaction."""
     await remove_document(session, doc_id)
     await _execute(session, "INSERT INTO fts_entries(content, kind, doc_id) VALUES (:c, :k, :d)", {"c": content, "k": kind, "d": doc_id})
+    await _execute(session, "INSERT INTO search_vector_state(doc_id, state) VALUES (:d, 'pending')", {"d": doc_id})
     if _vec_ready:
-        vec = embed_texts([content])
+        vec = _optional_embeddings([content])
         if vec is not None:
             await _execute(session, "INSERT INTO vec_entries(doc_id, embedding) VALUES (:d, :e)", {"d": doc_id, "e": _serialize(vec[0])})
+            await _execute(session, "UPDATE search_vector_state SET state = 'ready' WHERE doc_id = :d", {"d": doc_id})
 
 
 async def remove_document(session: AsyncSession, doc_id: str) -> None:
+    await _execute(session, "DELETE FROM search_vector_state WHERE doc_id = :d", {"d": doc_id})
     await _execute(session, "DELETE FROM fts_entries WHERE doc_id = :d", {"d": doc_id})
     if _vec_ready:
         await _execute(session, "DELETE FROM vec_entries WHERE doc_id = :d", {"d": doc_id})
@@ -154,29 +168,8 @@ async def content_for(session: AsyncSession, doc_id: str) -> str:
     return month.narrative if month else ""
 
 
-async def reindex(session: AsyncSession) -> dict:
-    """Full rebuild of FTS + vectors from the source tables."""
-    count = 0
-    for entry in (await session.exec(select(JournalEntry))).all():
-        await index_document(session, journal_doc_id(entry.date), "journal", entry.raw_markdown)
-        count += 1
-    for week in (await session.exec(select(WeeklySummary))).all():
-        content = "\n".join(filter(None, [week.wins, week.misses, week.carried_action_items]))
-        await index_document(session, f"weekly:{week.week_start.isoformat()}", "weekly", content)
-        count += 1
-    for month in (await session.exec(select(MonthlySummary))).all():
-        await index_document(session, f"monthly:{month.month}", "monthly", month.narrative)
-        count += 1
-    await session.commit()
-    return {"indexed": count, "semantic": bool(_vec_ready and _embed_model())}
-
-
-async def backfill_missing(session: AsyncSession) -> int:
-    """Index source documents missing from FTS (e.g. written before the search
-    feature existed). Idempotent; runs at startup. Vector backfill for docs
-    indexed before the embedding model was available happens via reindex."""
-    count = 0
-    sources: list[tuple[str, str, str]] = [
+async def _source_documents(session: AsyncSession) -> list[tuple[str, str, str]]:
+    sources = [
         (journal_doc_id(e.date), "journal", e.raw_markdown)
         for e in (await session.exec(select(JournalEntry))).all()
     ]
@@ -185,14 +178,51 @@ async def backfill_missing(session: AsyncSession) -> int:
         for w in (await session.exec(select(WeeklySummary))).all()
     ]
     sources += [(f"monthly:{m.month}", "monthly", m.narrative) for m in (await session.exec(select(MonthlySummary))).all()]
+    return sources
 
+
+async def reindex(session: AsyncSession) -> dict:
+    """Replace both indexes from sources in one transaction, including orphans."""
+    # Acquire the writer lock before reading; saves cannot interleave with rebuild
+    await _execute(session, "DELETE FROM fts_entries")
+    await _execute(session, "DELETE FROM search_vector_state")
+    if _vec_ready:
+        await _execute(session, "DELETE FROM vec_entries")
+    sources = await _source_documents(session)
     for doc_id, kind, content in sources:
-        exists = (await _execute(session, "SELECT 1 FROM fts_entries WHERE doc_id = :d LIMIT 1", {"d": doc_id})).first()
-        if exists is None:
+        await index_document(session, doc_id, kind, content)
+    ready = (await _execute(session, "SELECT 1 FROM search_vector_state WHERE state = 'ready' LIMIT 1")).first()
+    await session.commit()
+    return {"indexed": len(sources), "semantic": bool(_vec_ready and ready)}
+
+
+async def backfill_missing(session: AsyncSession) -> int:
+    """Reconcile stale/missing FTS, orphan documents and pending vectors at startup."""
+    # Acquire the writer lock without changing FTS; reconcile a stable source snapshot
+    await _execute(session, "DELETE FROM fts_entries WHERE 0")
+    sources = await _source_documents(session)
+    indexed: dict[str, list[tuple[str, str]]] = {}
+    for doc_id, kind, content in (await _execute(session, "SELECT doc_id, kind, content FROM fts_entries")).all():
+        indexed.setdefault(doc_id, []).append((kind, content))
+    states = dict((await _execute(session, "SELECT doc_id, state FROM search_vector_state")).all())
+    vectors: set[str] = set()
+    if _vec_ready:
+        vectors = set((await _execute(session, "SELECT doc_id FROM vec_entries")).scalars())
+
+    source_ids = {doc_id for doc_id, _, _ in sources}
+    orphans = (indexed.keys() | vectors | states.keys()) - source_ids
+    for doc_id in orphans:
+        await remove_document(session, doc_id)
+    count = len(orphans)
+    for doc_id, kind, content in sources:
+        if (
+            indexed.get(doc_id) != [(kind, content)]
+            or doc_id not in states
+            or (_vec_ready and (states[doc_id] != "ready" or doc_id not in vectors))
+        ):
             await index_document(session, doc_id, kind, content)
             count += 1
-    if count:
-        await session.commit()
+    await session.commit()
     return count
 
 
@@ -217,7 +247,7 @@ async def search(session: AsyncSession, q: str, limit: int = 20) -> list[SearchH
 
     sem_hits: dict[str, int] = {}
     if _vec_ready:
-        vec = embed_texts([q])
+        vec = _optional_embeddings([q])
         if vec is not None:
             rows = (
                 await _execute(

@@ -16,6 +16,8 @@ import { Input } from "@/components/ui/input"
 import { useCreateTask, useUpdateTask } from "@/hooks/api"
 import { formatDuration, parseUTC, toISO } from "@/lib/dates"
 import type { Task } from "@/api/types"
+import type { Scope } from "@/stores/ui"
+import { selectScopedTasks } from "@/lib/task-filter"
 import { cn } from "cn"
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -118,7 +120,8 @@ function DayCell({
   )
 }
 
-export function CalendarView({ tasks }: { tasks: Task[] }) {
+export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]; scope: Scope; search: string }) {
+  const tasks = useMemo(() => selectScopedTasks(allTasks, scope, search), [allTasks, scope, search])
   const updateTask = useUpdateTask()
   const createTask = useCreateTask()
   const [cursor, setCursor] = useState(() => {
@@ -168,13 +171,13 @@ export function CalendarView({ tasks }: { tasks: Task[] }) {
     if (!due) return
     const target = overData.date
     if (localDayParam(due) === localDayParam(target)) return
-    const next = new Date(target.getFullYear(), target.getMonth(), target.getDate(), due.getHours(), due.getMinutes())
+    const next = new Date(target.getFullYear(), target.getMonth(), target.getDate(), due.getHours(), due.getMinutes(), due.getSeconds(), due.getMilliseconds())
     updateTask.mutate({ id: task.id, patch: { due_date: toISO(next) } })
   }
 
   function addOnDay() {
     if (!openDay || !newTitle.trim()) return
-    createTask.mutate({ title: newTitle.trim(), due_date: toISO(new Date(openDay.getFullYear(), openDay.getMonth(), openDay.getDate(), 9, 0)) })
+    createTask.mutate({ title: newTitle.trim(), list_id: scope.kind === "list" ? scope.id : null, due_date: toISO(new Date(openDay.getFullYear(), openDay.getMonth(), openDay.getDate(), 9, 0)) })
     setNewTitle("")
   }
 

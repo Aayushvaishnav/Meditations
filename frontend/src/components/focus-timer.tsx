@@ -8,6 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useFocusTimer } from "@/stores/timer"
+import { useFocusTimerController } from "@/hooks/use-focus-timer-controller"
 import { useCreateSession, useTasks } from "@/hooks/api"
 import { toast } from "sonner"
 import { cn } from "cn"
@@ -49,22 +50,7 @@ export function FocusTimer() {
   const tasks = useTasks()
   const recordSession = useCreateSession()
 
-  // drive the clock while running; phase transitions log sessions
-  useEffect(() => {
-    if (!timer.running) return
-    const id = window.setInterval(() => {
-      const signal = useFocusTimer.getState().tick()
-      if (signal === "work-done") {
-        const { workMinutes, taskId } = useFocusTimer.getState()
-        recordSession.mutate({ task_id: taskId, duration_minutes: workMinutes, session_type: "pomodoro" })
-        toast.success(`Pomodoro complete — ${workMinutes}m logged`)
-      } else if (signal === "break-done") {
-        toast("Break over — ready for the next one")
-      }
-    }, 1000)
-    return () => window.clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timer.running])
+  useFocusTimerController()
 
   const activeTask = (tasks.data ?? []).find((t) => t.id === timer.taskId)
   const openTasks = (tasks.data ?? []).filter((t) => t.status !== "completed" && t.status !== "canceled")
@@ -82,6 +68,7 @@ export function FocusTimer() {
   }, [timer.open, timer.running, display, phaseLabel])
 
   function stopStopwatch() {
+    useFocusTimer.getState().pause()
     const { elapsed, taskId } = useFocusTimer.getState()
     if (elapsed >= 60) {
       const minutes = Math.max(1, Math.round(elapsed / 60))

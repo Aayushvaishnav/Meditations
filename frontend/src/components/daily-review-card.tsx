@@ -24,7 +24,7 @@ export function DailyReviewCard({ day }: { day: string }) {
         <h2 className="text-sm font-semibold">Day score</h2>
         {score.data && (
           <Badge variant="outline" className="text-xs">
-            {score.data.persisted ? "AI-reviewed" : "live telemetry"}
+            {score.data.persisted ? "live with AI nudge" : "live telemetry"}
           </Badge>
         )}
         <span className="ml-auto text-2xl font-semibold tabular-nums">
@@ -53,6 +53,12 @@ export function DailyReviewCard({ day }: { day: string }) {
             </Badge>
           )}
         </div>
+      )}
+
+      {score.data?.saved_review_score != null && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Saved review: {score.data.saved_review_score.toFixed(1)}. The day score uses current activity and your current focus target.
+        </p>
       )}
 
       {live?.feedback && <p className="mt-3 text-sm leading-relaxed opacity-80">{live.feedback}</p>}

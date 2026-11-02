@@ -6,10 +6,16 @@ on:
   workflow_dispatch: # build only, no release — test the pipeline before tagging
 
 permissions:
-  contents: write # create the draft release and upload bundles
+  contents: read
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   build-linux:
+    needs: checks
+    permissions:
+      contents: write # create the draft release and upload bundles
     # The ubuntu-22.04 runner label is retired (Sept 2026), so run inside an
     # ubuntu:22.04 container on the current runner instead: keeps the glibc
     # 2.35 baseline for older distros and old binutils (no default .relr.dyn
@@ -24,7 +30,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -43,7 +49,7 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       - name: Verify tag matches app version
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           version=$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")
           if [ "app-v$version" != "$GITHUB_REF_NAME" ]; then
@@ -51,23 +57,29 @@ jobs:
             exit 1
           fi
 
-      # one-dir PyInstaller bundle; must exist before tauri bundles resources
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.2"
+
+      # one-dir PyInstaller bundle; smoke-test the same binary Tauri packages
       - name: Build backend sidecar
+        working-directory: backend
         run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="$HOME/.local/bin:$PATH"
-          cd backend
-          uv sync
-          uv pip install pyinstaller
-          uv run pyinstaller sidecar.spec --noconfirm --distpath ../frontend/src-tauri/binaries
+          uv python install 3.12
+          uv sync --locked --python 3.12 --group packaging
+          uv run --locked --no-sync pyinstaller sidecar.spec --clean --noconfirm --distpath ../frontend/src-tauri/binaries
           test -x ../frontend/src-tauri/binaries/meditations-backend/meditations-backend
+
+      - name: Smoke-test packaged backend
+        working-directory: backend
+        run: uv run --locked --no-sync python scripts/smoke_sidecar.py ../frontend/src-tauri/binaries/meditations-backend/meditations-backend
 
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
 
       - name: Build and draft release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         # same proven invocation as the branch path; tauri-action died
         # unintrospectably here, so the draft release is handled explicitly
         run: |
@@ -82,7 +94,7 @@ jobs:
         working-directory: frontend
 
       - name: Create draft release and upload bundles
-        if: startsWith(github.ref, 'refs/tags/')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -150,7 +162,7 @@ jobs:
           EOF
 
       - name: Build only (branch push or manual run)
-        if: startsWith(github.ref, 'refs/heads/')
+        if: github.event_name == 'workflow_dispatch'
         # emit the build log tail as annotations (readable via the public
         # checks API when logs need admin rights); set +e so the dump runs
         # even though GitHub starts this shell with -e
@@ -166,7 +178,7 @@ jobs:
         working-directory: frontend
 
       - name: Upload build artifacts (branch push or manual run)
-        if: startsWith(github.ref, 'refs/heads/')
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: linux-bundles

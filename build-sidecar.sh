@@ -4,8 +4,6 @@
 # backend; CI runs the same steps inside the release workflow.
 set -e
 cd "$(dirname "$0")/backend"
-uv sync
-uv pip install pyinstaller
-rm -rf build  # stale PyInstaller analysis cache silently drops spec changes
-uv run pyinstaller sidecar.spec --noconfirm --distpath ../frontend/src-tauri/binaries
+uv sync --locked --python 3.12 --group packaging
+uv run --locked --no-sync pyinstaller sidecar.spec --clean --noconfirm --distpath ../frontend/src-tauri/binaries
 echo "sidecar ready: frontend/src-tauri/binaries/meditations-backend/"

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TZ: UTC
+      JOURNAL_SCHEDULED_REVIEWS: "false"
+      HF_HUB_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.2"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Install locked dependencies
+        run: uv sync --locked --python 3.12 --group dev
+      - name: Run backend tests
+        run: uv run --locked --no-sync pytest
+
+  frontend:
+    name: Frontend ${{ matrix.check }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [test, build, lint]
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run frontend ${{ matrix.check }}
+        run: npm run ${{ matrix.check }}

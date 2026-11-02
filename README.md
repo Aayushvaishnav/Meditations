@@ -73,7 +73,7 @@ Telemetry dashboard featuring deterministic daily score trends, completion rates
 ```
 backend/    FastAPI + SQLite (WAL) + FTS5 + sqlite-vec + PydanticAI agents
 frontend/   React 19 + Vite + Tailwind v4 + shadcn/Base-UI + TipTap + Tauri v2 shell
-systemd/    user timers for nightly/weekly/monthly AI rollups
+systemd/    retirement script for legacy HTTP rollup timers
 setup.sh    install backend + frontend dependencies (once per clone)
 dev.sh      launch backend + frontend for development (see Quick start)
 ```
@@ -142,10 +142,115 @@ a **main model** (reviews, decomposition) and a **fast tier** (capture, briefing
 Q&A, assists) that falls back to the main model. Per-agent prompt overrides live
 in `app_settings`. Details in `backend/README.md`.
 
+## Database backups
+
+Open **Settings → Database backup → Save backup**. On desktop, choose a new
+`.db` filename in the save dialog; existing files are preserved. In the browser,
+the file goes through the browser's download manager. Keep Settings open until
+the snapshot is ready, then check that the file was saved.
+
+The app can stay open during backup. The snapshot includes committed tasks,
+journals and ratings, reviews, habits, focus history, settings, and related
+records, including data still in SQLite's WAL. Unsaved editor changes are outside
+the snapshot; finish saving them first. Do not copy only the live `journal.db`
+file while the app is running.
+
+**Treat backups as sensitive.** They are unencrypted and include private journal
+content and API keys saved in Settings. Environment files and the downloaded
+embedding model are separate from the database and are excluded. Keep backups in
+a private location, with encryption when appropriate.
+
+Default database locations:
+
+| Runtime | Location |
+|---|---|
+| Packaged Linux desktop | `~/.local/share/dev.journal.app/journal.db` (under `$XDG_DATA_HOME` when set) |
+| Development backend started from `backend/` | `backend/data/journal.db` |
+| Standalone backend override | `JOURNAL_DB_PATH`; relative paths resolve from the backend process's working directory |
+
+Backups are snapshots, not live synchronization or portable Markdown/JSON exports.
+
+### Restore a backup
+
+1. Finish saving your work, then **Quit** Meditations from its tray menu. Closing
+   the window alone is not enough. Stop any standalone backend using the target
+   database too.
+2. From a source checkout, run the following from `backend/`, using the database
+   location from the table above. Both paths are explicit; no running API is used.
+
+   ```bash
+   uv run python -m app.recovery restore /path/to/backup.db --database /path/to/journal.db
+   ```
+
+   An installed packaged backend supports the same arguments:
+   `meditations-backend restore /path/to/backup.db --database /path/to/journal.db`.
+   Use the backend executable inside the application's bundled resources, not
+   the desktop launcher.
+3. Check the success message and the printed recovery-checkpoint path, then restart
+   the app. Search indexes reconcile automatically on startup. Semantic search can
+   remain pending while its embedding model is unavailable; text search still works.
+
+Restore checks integrity, relationships, and schema compatibility on a temporary
+copy and upgrades that copy when needed. An incompatible or newer backup is
+rejected without replacing your database. Before replacement, the current
+committed database is saved in a private `recovery/` directory beside it. If you
+need to undo a restore, quit the app and restore that checkpoint with the same
+command. If replacement fails, keep the reported files and resolve the cause
+before retrying. Restore replaces settings and saved API keys as well as content.
+
+Existing databases also get a recovery checkpoint before any pending schema
+upgrade. A checkpoint failure prevents the upgrade; a failed migration rolls back
+and leaves the checkpoint available. Check backend logs for its path. Fresh
+installs and starts with an up-to-date schema do not create checkpoints. These
+unencrypted files are kept until you remove them; protect them like backups and
+check disk space before upgrades.
+
+The ownership lock prevents restore while an updated Journal backend is running.
+It is advisory: quit older app versions and all external SQLite tools yourself.
+Do not delete the `.lock` file to bypass a lock or manually remove WAL files.
+Restore is an offline command; there is no restore button in Settings.
+
+## Portable data export
+
+Open **Settings → Portable data export → Export data (.zip)** to save readable
+copies of your data. The app can stay open. On desktop, choose a new filename;
+in a browser, check your downloads when the export is ready. Finish saving editor
+changes first: exports include committed data across all dates and lists, from
+one consistent snapshot.
+
+The ZIP contains:
+
+- `journals/YYYY-MM-DD.md`: your saved Markdown unchanged, including existing
+  frontmatter. Entries with ratings only have an empty Markdown file.
+- `data.json`: journal metadata and ratings, lists, tasks and subtasks, focus
+  sessions, habits and logs, and saved daily/weekly/monthly reviews.
+- `manifest.json`: format version, export time, and record counts.
+- `README.md`: field guide, date/time rules, and relationships for other tools.
+
+Original IDs, relationships, statuses, tags, scheduling values, and recurrence
+identity are preserved. Timestamps explicitly use UTC (`Z`); calendar date labels
+stay dates. Reviews remain saved snapshots instead of being recalculated during
+export.
+
+Application settings and provider credentials saved in Settings are excluded,
+along with AI usage, review jobs, and search indexes. Your text is copied without
+redaction, so anything private you wrote into tasks or journals is still included.
+**The ZIP is unencrypted. Review its contents before sharing it.**
+
+Use **Database backup** for application recovery. Portable ZIP import is not
+available; these files are for reading, keeping, and using with other tools.
+
 ## Scheduled AI rollups
 
+Packaged Meditations reviews completed UTC days, weeks, and months while the
+app is open, with catch-up on restart. Standalone/development backends opt in
+with `JOURNAL_SCHEDULED_REVIEWS=true`. See [scheduling details](backend/README.md#scheduled-rollups)
+for period boundaries, retry behavior, and first-run costs.
+
+If you installed the previous systemd timers, remove their installed copies:
+
 ```bash
-./systemd/install.sh   # daily 23:30 · weekly Sun 23:59 · monthly 1st 00:05
+./systemd/install.sh   # retires the legacy port-8000 timers
 ```
 
 ## Desktop app (Tauri v2)
@@ -158,7 +263,9 @@ builds spawn it on a free loopback port with the DB in
 
 ### With a native toolchain (recommended)
 
-Install the prerequisites, then build from `frontend/`:
+Install the prerequisites, then build from `frontend/`. The desktop shell
+requires **Rust 1.90 or newer**, including the native save-dialog/filesystem
+plugins used by database backups:
 
 ```bash
 # Fedora
@@ -229,7 +336,46 @@ Gotchas baked into this flow (see `AGENTS.md` for the full list):
 cd backend  && uv run pytest        # backend suite (in-memory SQLite)
 cd frontend && npm run test         # vitest (quick-add parser, date helpers)
 cd frontend && npm run build        # tsc -b + vite build — must pass before commit
+cd frontend && npm run lint         # oxlint
 ```
+
+### Pull-request and branch CI
+
+`.github/workflows/ci.yml` runs on every branch push and pull request, and
+supports manual runs. Four independent checks use Ubuntu 24.04: **Backend tests**
+(Python 3.12, `uv sync --locked`) and **Frontend test**, **Frontend build**, and
+**Frontend lint** (Node 24, `npm ci`). Failed frontend checks do not cancel the
+other checks. Existing lint warnings remain visible; lint errors fail the check.
+
+To block merges, a repository administrator must enable a branch ruleset or
+branch protection for the target branch and require all four check names above.
+Select the checks after their first GitHub run. The workflow alone cannot enforce
+merge protection. No path filters skip required checks; release tags use the
+separate release workflow.
+
+### Release validation
+
+`.github/workflows/release.yml` calls the same four checks for each release tag
+and manual build. The Linux bundle job waits for all of them to pass. It builds
+the backend with Python 3.12 and the lockfile's `packaging` dependency group,
+then launches that frozen executable through `backend/scripts/smoke_sidecar.py`.
+A startup, health, or local CRUD failure stops the job before Tauri builds or
+any draft-release creation or asset upload. Manual runs validate and build
+artifacts without creating a release.
+
+To test an existing sidecar locally:
+
+```bash
+python3 backend/scripts/smoke_sidecar.py frontend/src-tauri/binaries/meditations-backend/meditations-backend
+```
+
+The smoke test uses a temporary working directory, database, and home/cache
+paths. It disables scheduled reviews and model downloads, uses an ephemeral
+loopback port, and cleans up its child process and temporary data. It does not
+exercise AI providers or the desktop GUI. As with any draft release, publication
+is a separate administrator action; the workflow cannot prevent manual uploads
+or publication of an older draft.
+
 
 Agent tests never touch the network (runners are monkeypatched / `TestModel`),
 and the semantic-search tests stub `embed_texts` — no real fastembed model.

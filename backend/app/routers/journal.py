@@ -114,10 +114,9 @@ async def upsert_entry(day: date, payload: JournalUpsert, session: SessionDep):
     entry.tasks_done = metrics.tasks_completed
 
     session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
     await index_document(session, journal_doc_id(day), "journal", entry.raw_markdown)
     await session.commit()
+    await session.refresh(entry)
     return {"saved": True, **JournalEntry.model_validate(entry).model_dump(mode="json")}
 
 
@@ -125,7 +124,6 @@ async def upsert_entry(day: date, payload: JournalUpsert, session: SessionDep):
 async def delete_entry(day: date, session: SessionDep):
     entry = await _get_entry_or_404(session, day)
     await session.delete(entry)
-    await session.commit()
     await remove_document(session, journal_doc_id(day))
     await session.commit()
 

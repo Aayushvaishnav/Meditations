@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { parseQuickAdd } from "./parsing"
 
 describe("parseQuickAdd", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 14, 14, 30))
+  })
+
+  afterEach(() => vi.useRealTimers())
+
   it("extracts title, due, priority, list, tag and estimate (plan §6.1 example)", () => {
     const p = parseQuickAdd("Review Q3 budget tomorrow 3pm !1 #finance @urgent ~45m")
     expect(p.title).toBe("Review Q3 budget")
@@ -54,18 +61,18 @@ describe("parseQuickAdd", () => {
     const p = parseQuickAdd("gym 9am")
     expect(p.due_date).not.toBeNull()
     const due = new Date(p.due_date!)
-    // an implicit time reference must never land in the past
-    expect(due.getTime()).toBeGreaterThan(Date.now() - 1000)
+    expect(due).toEqual(new Date(2026, 9, 15, 9))
   })
 
   it("rolls a past weekday to next week", () => {
-    // pick a weekday that has certainly passed this week
-    const now = new Date()
-    const names = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
-    const yesterday = new Date(now)
-    yesterday.setDate(now.getDate() - 1)
-    const p = parseQuickAdd(`meet alex ${names[yesterday.getDay()]} 3pm`)
-    const due = new Date(p.due_date!)
-    expect(due.getTime()).toBeGreaterThan(now.getTime())
+    const p = parseQuickAdd("meet alex tue 3pm")
+    expect(new Date(p.due_date!)).toEqual(new Date(2026, 9, 20, 15))
+  })
+  it("uses 09:00 for a date-only phrase and preserves an explicit time", () => {
+    const dateOnly = parseQuickAdd("review tomorrow")
+    const timed = parseQuickAdd("review tomorrow 3pm")
+    expect(dateOnly.title).toBe("review")
+    expect(dateOnly.due_date).toBe(new Date(2026, 9, 15, 9).toISOString())
+    expect(timed.due_date).toBe(new Date(2026, 9, 15, 15).toISOString())
   })
 })

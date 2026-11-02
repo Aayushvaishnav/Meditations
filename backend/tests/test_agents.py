@@ -108,24 +108,22 @@ def test_weekly_rollup_empty_week_404(client, llm_weekly):
 # --- monthly rollup ---
 def test_monthly_rollup_from_weeks(client, llm_weekly, monkeypatch):
     async def fake_monthly(deps, model=None, **kwargs):
-        assert len(deps.weeks) >= 2, "monthly agent needs the week rollups"
+        assert [week["week_start"] for week in deps.weeks] == ["2026-09-07", "2026-09-14"]
         return agents.MonthlyReviewOutput(narrative="A month of steady build-up.")
 
     monkeypatch.setattr(agents, "run_monthly_review", fake_monthly)
 
-    # roll up two weeks of the current month (both fully inside it)
-    today = utc_now().date()
-    week1 = monday_of(today)
-    week2 = week1 + dt.timedelta(days=7)
-    make_entry(client, week1.isoformat())
-    make_entry(client, week2.isoformat())
-    client.post("/api/agents/rollup/weekly", params={"week_start": week1.isoformat()})
-    client.post("/api/agents/rollup/weekly", params={"week_start": week2.isoformat()})
+    week1 = dt.date(2026, 9, 7)
+    week2 = dt.date(2026, 9, 14)
+    for week in (week1, week2):
+        make_entry(client, week.isoformat())
+        weekly = client.post("/api/agents/rollup/weekly", params={"week_start": week.isoformat()})
+        assert weekly.status_code == 200, weekly.text
 
-    r = client.post("/api/agents/rollup/monthly", params={"month": today.strftime("%Y-%m")})
-    assert r.status_code == 200
+    r = client.post("/api/agents/rollup/monthly", params={"month": "2026-09"})
+    assert r.status_code == 200, r.text
     body = r.json()
-    assert body["month"] == today.strftime("%Y-%m")
+    assert body["month"] == "2026-09"
     assert body["narrative"] == "A month of steady build-up."
     assert body["trend"] in ("rising", "declining", "stable")
 
