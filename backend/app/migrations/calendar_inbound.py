@@ -5,9 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 async def migrate_calendar_inbound(conn: AsyncConnection) -> None:
     for sql in (
         'CREATE TABLE calendar_inbound_state (id VARCHAR NOT NULL PRIMARY KEY, '
-        'connection_id VARCHAR NOT NULL, capability VARCHAR NOT NULL, sync_token VARCHAR, '
+        'connection_id VARCHAR NOT NULL, capability VARCHAR NOT NULL, revision INTEGER NOT NULL DEFAULT \'0\', sync_token VARCHAR, '
         'last_synced_at DATETIME, error_state VARCHAR NOT NULL DEFAULT \'none\', last_error VARCHAR, '
         'CONSTRAINT uq_calendar_inbound_connection UNIQUE (connection_id), '
+        'CONSTRAINT ck_calendar_inbound_revision CHECK (revision >= 0), '
         'CONSTRAINT ck_calendar_inbound_capability CHECK (capability IN (\'unknown\', \'sync_token\', \'listing\')), '
         'CONSTRAINT ck_calendar_inbound_token CHECK ((capability = \'sync_token\' AND sync_token IS NOT NULL) '
         'OR capability != \'sync_token\'), '

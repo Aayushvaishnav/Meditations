@@ -80,3 +80,42 @@ async def test_inbound_state_constraints():
                     "'raw', 'stored', '2026-01-01 00:00:00')")
     finally:
         await engine.dispose()
+
+
+def test_checkpoint_restore_preserves_inbound_cache_and_cursor(tmp_path):
+    import asyncio
+    import sqlite3
+    from contextlib import closing
+    from app.recovery import checkpoint_database, restore_database
+
+    source = tmp_path / 'inbound.db'
+
+    async def create():
+        engine = create_async_engine('sqlite+aiosqlite:///' + str(source))
+        try:
+            await migrations.migrate(engine)
+            async with engine.begin() as conn:
+                await conn.exec_driver_sql(
+                    "INSERT INTO calendar_connections (id,server_url,calendar_url,state,enabled,"
+                    "created_at,updated_at,credential_state) VALUES "
+                    "('c','https://dav.test/','https://dav.test/cal/','connected',1,"
+                    "'2026-01-01','2026-01-01','present')")
+                await conn.exec_driver_sql(
+                    "INSERT INTO calendar_inbound_state (id,connection_id,capability,revision,"
+                    "sync_token,last_synced_at,error_state) VALUES ('s','c','sync_token',4,"
+                    "'opaque-token','2026-01-01','none')")
+                await conn.exec_driver_sql(
+                    "INSERT INTO calendar_inbound_events (id,connection_id,resource_url,etag,content,"
+                    "component_state,fetched_at) VALUES ('e','c','https://dav.test/cal/a.ics',"
+                    "'\"v1\"','original opaque text','unparsable','2026-01-01')")
+        finally:
+            await engine.dispose()
+
+    asyncio.run(create())
+    checkpoint = checkpoint_database(source, 'inbound-test')
+    destination = tmp_path / 'restored.db'
+    asyncio.run(restore_database(checkpoint, destination))
+    with closing(sqlite3.connect(source)) as before, closing(sqlite3.connect(destination)) as after:
+        for table in TABLES:
+            assert before.execute(f'SELECT * FROM {table}').fetchall() == after.execute(f'SELECT * FROM {table}').fetchall()
+        assert after.execute('PRAGMA foreign_key_check').fetchall() == []

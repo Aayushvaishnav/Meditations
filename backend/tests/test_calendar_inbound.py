@@ -1,8 +1,6 @@
 """SYNC-02 capability-aware inbound reconciliation; no server, vault, or user database."""
-import asyncio
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import event
@@ -13,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.migrations import migrate
 from app.calendar_sync.adapter import (
-    AuthenticationError, CalDAVError, NotFoundError, RemoteResource, SyncTokenInvalid, SyncResult, SyncChange,
+    AuthenticationError, CalDAVError, RemoteResource, SyncTokenInvalid, SyncResult, SyncChange,
 )
 from app.calendar_sync.inbound import InboundService, reconcile_connections
 from app.models import CalendarConnection, CalendarInboundEvent, CalendarInboundState
@@ -68,7 +66,7 @@ class FakeAdapter:
     async def get_resource(self, url):
         self.calls.append(('get', url))
         etag, content = self.resources[url]
-        return RemoteResource(url, etag, content)
+        return RemoteResource(url, etag, content.encode())
 
 
 @pytest.fixture
@@ -92,8 +90,9 @@ async def sessions(engine):
 
 
 async def seed(sessions, **overrides):
-    connection = CalendarConnection(server_url='https://dav.test/', calendar_url='https://dav.test/cal/',
-                                    state='connected', enabled=True, credential_state='present', **overrides)
+    values = dict(server_url='https://dav.test/', calendar_url='https://dav.test/cal/',
+                  state='connected', enabled=True, credential_state='present')
+    connection = CalendarConnection(**(values | overrides))
     async with sessions() as session:
         session.add(connection)
         await session.commit()
@@ -248,7 +247,7 @@ async def test_protocol_failure_records_error_without_touching_cache(sessions):
     adapter.fail_sync_collection = CalDAVError('server exploded')
     await reconcile_connections(sessions, adapter_for(adapter))
     state = await state_of(sessions, connection.id)
-    assert state.error_state == 'present' and 'exploded' in state.last_error
+    assert state.error_state == 'present' and 'server exploded' not in state.last_error
     async with sessions() as session:
         fresh = await session.get(CalendarConnection, connection.id)
     assert fresh.state == 'connected'  # operational errors do not demote
@@ -267,7 +266,7 @@ async def test_disabled_or_unverified_connections_are_skipped(sessions):
 
 
 async def test_multi_event_resources_are_unparsable_not_projected(sessions):
-    two = ics() .replace('END:VEVENT', 'END:VEVENT\r\nBEGIN:VEVENT\r\nUID:second\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260116T090000Z\r\nDTEND:20260116T100000Z\r\nEND:VEVENT')
+    two = ics().replace('END:VEVENT', 'END:VEVENT\r\nBEGIN:VEVENT\r\nUID:second\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260116T090000Z\r\nDTEND:20260116T100000Z\r\nEND:VEVENT')
     adapter = FakeAdapter({'https://dav.test/cal/two.ics': ('"v1"', two)})
     connection = await seed(sessions)
     await InboundService(sessions).reconcile(connection, adapter)

@@ -174,6 +174,12 @@ matching event identities; omitted records remain. In Calendar, choose an
 Recurring occurrence expansion and reminders remain deferred. See the
 [calendar import guide](docs/calendar-import.md).
 
+For a connected CalDAV calendar, select **Live calendar** in Calendar to show
+read-only mirrored appointments. Verify and enable the connection in Settings
+first. Last-check and stale-cache messages distinguish mirrored snapshots from
+current server availability; remote events never rewrite local tasks. See
+[mirroring remote events](docs/calendar-sync.md#mirror-remote-events-read-only).
+
 Automatic ICS URL subscriptions and Journal-hosted feeds are unavailable. The
 [subscription evaluation](docs/calendar-subscriptions.md) distinguishes future
 external URL polling from publishing a reachable, access-controlled Journal feed.

@@ -6,12 +6,13 @@ from contextlib import AbstractAsyncContextManager
 from weakref import WeakValueDictionary
 
 from sqlmodel import select
+from sqlalchemy import delete
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.calendar_sync.adapter import AuthenticationError, CalDAVAdapter, CalDAVError, Calendar
 from app.calendar_sync.credentials import Credentials, CredentialStore, CredentialStoreError
 from app.calendar_sync.transport import open_adapter
-from app.models import CalendarConnection, CalendarLink
+from app.models import CalendarConnection, CalendarLink, CalendarInboundEvent, CalendarInboundState
 from app.util import utc_now
 
 
@@ -93,6 +94,11 @@ class ConnectionManager:
             except CredentialStoreError:
                 raise ConnectionFailure(503, "OS credential storage failed; disconnect to finish cleanup before retrying") from None
             connection.credential_state = "present"
+            if connection.calendar_url != calendar.url:
+                await session.exec(delete(CalendarInboundEvent).where(
+                    CalendarInboundEvent.connection_id == connection_id))
+                await session.exec(delete(CalendarInboundState).where(
+                    CalendarInboundState.connection_id == connection_id))
             connection.calendar_url = calendar.url
             connection.state = "connected"
             await self._save(session, connection)

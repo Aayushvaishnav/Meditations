@@ -204,6 +204,22 @@ stay unconverted, and no-end timed records are points. Opaque series, cancellati
 durations and unsafe intervals remain in an explicit outside-grid inventory.
 Files require reimport to refresh; this feature does not fetch live calendars.
 
+### Live Calendar overlay
+
+Calendar's initially Hidden **Live calendar** selector uses the independent
+`['calendar-inbound']` cache. Mirrored chips and day details are read-only;
+selection does not change task filtering or telemetry. `calendar-live-overlay.tsx`
+shows paused/authentication/error stale-cache states, the last successful check,
+and unplaced item details. The overlay endpoint supplies reconciliation status
+alongside timed/floating/all-day intervals, with no occurrence expansion.
+
+`hooks/calendar-inbound.ts` owns 10-second cache polling and app-wide resume
+signaling. Focus and return-to-visible events share an active reconciliation
+promise per QueryClient. Calendar controls and resume invalidate connection and
+inbound queries without task invalidation; query keys isolate late responses
+from different selections. The backend's enabled/verified gate controls remote
+and vault access. [Calendar guide](../docs/calendar-sync.md#mirror-remote-events-read-only).
+
 ### Optional outgoing webhooks
 
 Settings has an independent outgoing-webhooks section for endpoint creation and

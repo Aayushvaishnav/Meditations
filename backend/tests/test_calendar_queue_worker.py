@@ -102,7 +102,7 @@ async def test_uncertain_create_then_local_delete_reconciles_before_deleting(env
 async def test_connection_gates_preserve_pending_work(env, changes):
     await change(env, CalendarConnection, env.connection.id, **changes)
     await QueueWorker(env.sessions, env.manager).run_once()
-    assert writes(env) == []  # inbound reconciliation may read; outbound gates block writes
+    assert env.adapter.calls == []
     assert (await saved(env)).acknowledged_revision == 0
 
 

@@ -190,3 +190,19 @@ describe("imported calendar overlay with real query hooks", () => {
     expect(fetcher.mock.calls.filter(([url, init]) => String(url).includes("/tasks") && init?.method)).toHaveLength(0)
   })
 })
+
+it.each([2, 3])("counts only actually hidden appointments with two imports and %s mirrored events", async count => {
+  const base = overlay().items[0]!
+  const interval = { kind: "date", start: "2026-03-08", end: "2026-03-09" }
+  routes["/calendar/connections"] = () => [{id: "c1", calendar_url: "https://dav.test/calendar", state: "connected", enabled: true}]
+  routes["/calendar/imports/a/overlay"] = () => ({source_id: "a", unplaced: [], items: ["Imported one", "Imported two"].map(summary => ({...base, id: summary, summary, interval}))})
+  routes["/calendar/connections/c1/inbound/overlay"] = () => ({connection_id: "c1", reconciliation: {state: "current", capability: "listing", last_synced_at: "2026-03-08T10:00:00", last_error: null}, unplaced: [], items: Array.from({length: count}, (_, i) => ({...base, connection_id: "c1", id: `live-${i}`, summary: `Live ${i}`, interval}))})
+  render(view())
+  await select()
+  await screen.findByRole("option", {name: "https://dav.test/calendar"})
+  fireEvent.change(screen.getByLabelText("Live calendar"), {target: {value: "c1"}})
+  await waitFor(() => expect(screen.queryAllByRole("button").filter(button => button.textContent === "Live 0Mirrored")).toHaveLength(1))
+  const day = within(screen.getByRole("button", {name: "Add task on 2026-03-08"}).parentElement!.parentElement!)
+  if (count === 2) expect(day.queryByText(/\+\d+ more/)).toBeNull()
+  else expect(day.getByText("+1 more")).toBeDefined()
+})

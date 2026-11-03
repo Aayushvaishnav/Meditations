@@ -19,6 +19,12 @@ export interface InboundOverlayUnplaced {
 
 export interface InboundOverlay {
   connection_id: string
+  reconciliation: {
+    state: "never" | "current" | "error"
+    capability: "unknown" | "sync_token" | "listing"
+    last_synced_at: string | null
+    last_error: string | null
+  }
   items: InboundOverlayItem[]
   unplaced: InboundOverlayUnplaced[]
 }

@@ -134,3 +134,84 @@ def test_supported_report_set_without_sync_collection():
             '<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>'))
 
     assert run(handler, lambda adapter: adapter.supports_sync_collection(COLLECTION)) is False
+
+@pytest.mark.parametrize('inner', [
+    change('/dav/events/a.ics', '"a"') * 2,
+    change('/other/a.ics', '"a"'),
+    removal('/dav/events/a.ics?q=1'),
+    removal('/dav/events/../events/a.ics'),
+    removal('/dav/events/%2e/a.ics'),
+    removal('/dav/events/a.ics').replace('</d:response>', '<d:status>HTTP/1.1 404 Not Found</d:status></d:response>'),
+    change('/dav/events/a.ics', '"a"').replace('</d:response>', '<d:status>HTTP/1.1 404 Not Found</d:status></d:response>'),
+    change('/dav/events/a.ics', '"a"').replace('</d:prop>', '</d:prop><d:prop/>'),
+    change('/dav/events/a.ics', '"a"').replace('</d:getetag>', '<d:x/></d:getetag>'),
+])
+def test_report_rejects_ambiguous_or_nonmember_changes(inner):
+    with pytest.raises(ProtocolError):
+        run(lambda request: httpx.Response(207, content=sync_response(inner, 't')), lambda adapter: adapter.sync_collection(COLLECTION))
+
+
+@pytest.mark.parametrize('token_xml', ['', '<d:sync-token>bad token</d:sync-token>', '<d:sync-token>t<d:x/></d:sync-token>'])
+def test_initial_report_requires_one_scalar_token(token_xml):
+    with pytest.raises(ProtocolError):
+        run(lambda request: httpx.Response(207, content=sync_response(token_xml)), lambda adapter: adapter.sync_collection(COLLECTION))
+
+
+def test_report_requests_sync_level_one():
+    from xml.etree import ElementTree as ET
+    def handler(request):
+        assert ET.fromstring(request.content).findtext('{DAV:}sync-level') == '1'
+        return httpx.Response(207, content=sync_response('', 't'))
+    run(handler, lambda adapter: adapter.sync_collection(COLLECTION))
+
+
+@pytest.mark.parametrize('body', ['valid-sync-token', '<x:error xmlns:x="other"><x:valid-sync-token/></x:error>', '<d:error xmlns:d="DAV:"><d:description>valid-sync-token</d:description></d:error>'])
+def test_token_error_requires_exact_dav_precondition(body):
+    with pytest.raises(AuthenticationError):
+        run(lambda request: httpx.Response(403, content=body), lambda adapter: adapter.sync_collection(COLLECTION))
+
+
+def test_get_never_classifies_token_expiry():
+    with pytest.raises(AuthenticationError):
+        run(lambda request: httpx.Response(403, content='<d:error xmlns:d="DAV:"><d:valid-sync-token/></d:error>'), lambda adapter: adapter.get_resource(COLLECTION + 'a.ics'))
+
+
+def capability_row(href, reports, status=200):
+    return (f'<d:response><d:href>{href}</d:href><d:propstat><d:prop>{reports}</d:prop>'
+            f'<d:status>HTTP/1.1 {status} Result</d:status></d:propstat></d:response>')
+
+
+def test_capability_uses_exact_collection_not_first_row():
+    supported = '<d:supported-report-set><d:supported-report><d:report><d:sync-collection/></d:report></d:supported-report></d:supported-report-set>'
+    body = capability_row('/dav/other/', supported) + capability_row('/dav/events/', '<d:supported-report-set/>')
+    assert run(lambda request: httpx.Response(207, content=sync_response(body)), lambda adapter: adapter.supports_sync_collection(COLLECTION)) is False
+
+
+def test_missing_optional_capability_property_allows_listing():
+    body = capability_row('/dav/events/', '<d:supported-report-set/>', 404)
+    assert run(lambda request: httpx.Response(207, content=sync_response(body)), lambda adapter: adapter.supports_sync_collection(COLLECTION)) is False
+
+
+@pytest.mark.parametrize('reports', [
+    '<d:sync-collection/>',
+    '<d:supported-report/>',
+    '<d:supported-report><d:report><d:sync-collection/><d:expand-property/></d:report></d:supported-report>',
+    '<d:supported-report><d:report><d:sync-collection><d:x/></d:sync-collection></d:report></d:supported-report>',
+])
+def test_capability_rejects_malformed_report_membership(reports):
+    body = capability_row('/dav/events/', f'<d:supported-report-set>{reports}</d:supported-report-set>')
+    with pytest.raises(ProtocolError):
+        run(lambda request: httpx.Response(207, content=sync_response(body)), lambda adapter: adapter.supports_sync_collection(COLLECTION))
+
+
+def test_report_accepts_missing_optional_property_but_requires_etag():
+    body = change('/dav/events/a.ics', '"a"').replace('</d:response>', '<d:propstat><d:prop><d:displayname/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response>')
+    result = run(lambda request: httpx.Response(207, content=sync_response(body, 't')), lambda adapter: adapter.sync_collection(COLLECTION))
+    assert result.changes[0].etag == '"a"'
+
+
+@pytest.mark.parametrize('status', [405, 501])
+def test_explicit_unsupported_report_has_distinct_error(status):
+    from app.calendar_sync.adapter import UnsupportedSyncCollection
+    with pytest.raises(UnsupportedSyncCollection):
+        run(lambda request: httpx.Response(status), lambda adapter: adapter.sync_collection(COLLECTION))

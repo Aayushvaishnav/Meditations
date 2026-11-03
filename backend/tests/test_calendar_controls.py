@@ -21,7 +21,7 @@ async def test_pause_preserves_work_and_manual_sync_requires_enablement(env):
     with pytest.raises(ConnectionFailure) as error:
         await control.sync_now(env.connection.id)
     assert error.value.status == 409
-    assert [call for call in env.adapter.calls if call[0] in ("put", "delete")] == []
+    assert env.adapter.calls == []
     assert (await control.status(env.connection.id))['queued_count'] == 1
     await control.enable(env.connection.id, True)
     status = await control.sync_now(env.connection.id)
@@ -40,7 +40,7 @@ async def test_opt_in_only_selected_block_idempotent_and_no_network(env):
     assert first.id == second.id
     assert first.uid == env.link.uid
     assert first.state == 'pending'
-    assert [call for call in env.adapter.calls if call[0] in ("put", "delete")] == []
+    assert env.adapter.calls == []
 
 
 async def test_opt_out_published_event_queues_conditional_cleanup_while_paused(env):
@@ -86,7 +86,7 @@ async def test_authentication_gates_opt_in_enable_and_manual_sync(env, state):
                       control.sync_now(env.connection.id)]:
         with pytest.raises(ConnectionFailure):
             await operation
-    assert [call for call in env.adapter.calls if call[0] in ("put", "delete")] == []
+    assert env.adapter.calls == []
     await control.enable(env.connection.id, False)
     await control.opt_out(env.connection.id, env.block.id)
 

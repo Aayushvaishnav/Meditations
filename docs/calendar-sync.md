@@ -102,7 +102,11 @@ Local saves are immediate; remote success requires server acknowledgment. A comp
 
 While a connection is verified and sync is enabled, Journal mirrors the remote calendar's events into a read-only cache. Mirrored appointments appear in the calendar view under the **Live calendar** selector as distinct chips labelled "Mirrored". They never create or modify tasks, deadlines, work blocks, focus, or scores — the server stays authoritative for its own events.
 
-Mirroring updates automatically: at startup, every 30 seconds while running, on **Sync now**, and when the app window regains focus. Servers supporting WebDAV sync tokens (Radicale 3.9 does) are reconciled incrementally; other servers use complete listings. If a stored token expires, the cache rebuilds automatically. Events that cannot be displayed (recurring series, cancelled, or unparsable) are counted instead of shown; multi-event resources are kept as unparsable cache entries. Disconnecting or pausing stops mirroring; the last cached view stays until reconnect. Editing remote events happens in your other calendar client — Journal never writes back to mirrored events.
+Mirroring updates every 30 seconds while the app runs, on **Sync now**, and when the window returns to focus or becomes visible. After restarting or restoring, verify and enable the connection in Settings before remote activity resumes. If a stored sync token expires, the cache rebuilds automatically. Servers without token support use complete calendar listings.
+
+The selector starts **Hidden**. Choose a calendar to see its last successful check, read-only appointments and **Outside the grid** details for recurring, cancelled or unsupported events. Series with multiple components stay preserved without occurrence expansion. Paused, authentication-required or failed refreshes label the last-good appointments stale. If the local cache cannot be loaded, use **Retry appointments**.
+
+Pausing stops mirroring but keeps cached appointments visible with that warning. Disconnecting hides the calendar and retains its local cache until reconnection; selecting a different destination clears the previous cache. Edit mirrored events in your other calendar client. Journal's existing outbound sync still writes only explicitly opted-in work blocks.
 
 ## Pause, remove, or disconnect
 
@@ -128,7 +132,7 @@ If Settings reports **Credential removal incomplete. Retry Disconnect.**, unlock
 
 ## Verification scope
 
-Real-HTTP integration checks target **Radicale 3.9.0**: discovery, authentication, conditional writes and conflicts, response-loss recovery, offline/restart behavior, DST boundaries, and all-day dates. Packaged-backend discovery targets a local test server only. Native OS vault integration and the full desktop workflow remain unverified. These checks do not establish compatibility with every calendar client or deployment configuration.
+Real-HTTP integration checks target **Radicale 3.9.0**: discovery, authentication, conditional writes and conflicts, response-loss recovery, offline/restart behavior, inbound token reconciliation (including rejected-token rebuilds and remote deletions), DST boundaries, and all-day dates. Packaged-backend discovery targets a local test server only. Native OS vault integration and the full desktop workflow remain unverified. These checks do not establish compatibility with every calendar client or deployment configuration.
 
 **Nextcloud and Baïkal have not been verified.** No support claim is made for them. Use the verified Radicale scope as a starting point and test your own server and clients before relying on synchronization.
 

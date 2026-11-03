@@ -873,44 +873,60 @@ feature; live inbound reconciliation is SYNC-02 below.
 
 #### Capability-aware inbound reconciliation (SYNC-02)
 
-`app/calendar_sync/inbound.py` mirrors read-only external events from each
-enabled, verified CalDAV connection into a dedicated cache (schema v15:
-`calendar_inbound_state` + `calendar_inbound_events`, one row per remote
-resource with its ETag, raw text and parsed projection fields). Mirrored events
-never create or modify tasks, deadlines, focus, or scores.
+`app/calendar_sync/inbound.py` mirrors read-only external events from enabled,
+verified CalDAV connections into a dedicated schema-v15 cache.
+`calendar_inbound_state` owns capability, token, monotonic revision, last
+successful check, and explicit error status. `calendar_inbound_events` owns
+resource URL/ETag, original UTF-8 text and parsed projection fields. These
+rows never modify tasks, deadlines, work blocks, focus, scores or outbound
+links. SQLite backups/recovery preserve them; portable ZIP exports exclude them.
 
-- **Capability probe**: on first reconciliation, a `supported-report-set`
-  PROPFIND selects RFC 6578 `sync-collection` REPORT when the server offers it
-  (Radicale 3.9 does); otherwise the connection reconciles through complete
-  Depth-1 ETag listings. The persisted capability is sticky; the probe runs
-  once per connection.
-- **Token passes**: incremental REPORTs return changed/deleted hrefs plus a new
-  token; changed resources are GET-ed and validated with the strict import
-  parser. A complete batch (report + all fetches) commits atomically together
-  with the new token; any transport/protocol failure leaves the previous cache
-  and token untouched. Rejected tokens (`403 valid-sync-token`) recover within
-  the same pass through an initial (token-less) sync-collection report, which
-  rebuilds the cache and mints a fresh token.
-- **Listing mode**: a complete listing is the deletion authority — cached URLs
-  absent from a finished listing are removed; unchanged resources are retained
-  verbatim without refetching. No deletion is ever inferred from a partial or
-  failed batch, so cache windows cannot mistake out-of-range events for
-  deletions.
-- **Unparsable resources** (multiple VEVENTs per resource, invalid iCalendar)
-  keep their raw text with `component_state='unparsable'` and surface as
-  `unparsable_resource` in the overlay instead of failing the batch.
-- **Triggers**: reconciliation runs with every queue-worker pass — backend
-  startup, the 30-second periodic loop, manual **Sync now**, and app resume
-  (`POST /api/calendar/connections/resume`, driven by window focus/visibility
-  through `useResumeCalendarReconciliation`). Authentication failures demote
-  the connection to `authentication_required`; operational failures record
-  `error_state` on the inbound state row and retry on the next pass.
-- **Overlay**: `GET /api/calendar/connections/{id}/inbound/overlay` reuses the
-  SYNC-01 projection contract (timed/floating/all-day intervals, explicit
-  unplaced reasons, opaque recurrence) from cached snapshots. The calendar
-  renders mirrored events as distinct read-only chips under a separate
-  "Live calendar" selector, independent of task filters, deadlines, work
-  blocks, and imported overlays.
+- **Capability**: `supported-report-set` selects RFC 6578 `sync-collection`
+  REPORT with `sync-level=1`, otherwise complete Depth-1 listings. An absent
+  optional report property selects listing. An explicitly unsupported REPORT
+  (405/501) switches to listing; a malformed/incomplete report fails instead
+  of becoming an empty inventory. Successful reports require one valid token.
+- **Batch boundary**: all reported changes and GET payloads are validated
+  before one cache/cursor commit. GET URL and strong ETag must match the
+  enumeration; a changed or disappeared resource aborts the batch for retry.
+  Read sessions close before HTTP. At commit SQLite's writer lock protects
+  connection and monotonic-cursor comparisons, so superseded passes cannot
+  overwrite a newer cache, pause or destination. Cached resource IDs survive
+  both unchanged passes and updates. Operational errors retain the last-good
+  cache/token and record a generic credential-safe message.
+- **Deletion authority**: the cache covers the complete selected collection,
+  with no date window. Incremental reports process explicit deletion members.
+  Complete listings and initial token-less reports remove cached URLs absent
+  from the completed inventory, including an empty inventory. A rejected token
+  (403 with the DAV `valid-sync-token` precondition) recovers through an initial
+  REPORT in the same pass. Token and cache change together only after success;
+  failed resets cannot remove cached events.
+- **Protocol boundary**: report hrefs must be same-origin immediate collection
+  members, with no duplicate/contradictory entries, query/dot aliases, DTDs or
+  entities. Only REPORT's parsed DAV token precondition triggers token recovery;
+  unrelated permission failures remain authentication errors.
+- **Unsupported resources**: multiple VEVENTs in one resource, including a
+  valid recurrence master with overrides, remain opaque/unplaced. Invalid
+  iCalendar also retains valid UTF-8 text as `component_state='unparsable'`.
+  Non-UTF-8 GET bodies fail the batch instead of silently replacing bytes.
+  There is no recurrence expansion or alarm execution.
+- **Lifecycle**: the queue worker starts with the backend and runs every 30
+  seconds, on manual **Sync now**, and via the app-resume endpoint
+  `POST /api/calendar/connections/resume`. Existing startup/restore verification
+  gates remain: no remote or vault access occurs until a connection is explicitly
+  verified and enabled. Authentication failures disable it and require
+  verification again. Connection destination changes atomically clear the old
+  inbound cache/cursor; same-destination credential replacement retains them.
+- **Frontend**: `hooks/calendar-inbound.ts` owns independent
+  `['calendar-inbound']` queries, 10-second cache polling, and stable window
+  focus/visibility listeners. Overlapping resume signals share one active pass
+  per QueryClient. Resume/manual controls invalidate connection and inbound
+  caches without task/telemetry invalidation. The initially Hidden **Live
+  calendar** selector renders separate read-only mirrored chips and unplaced
+  details from `GET /api/calendar/connections/{id}/inbound/overlay`. The response
+  includes `reconciliation` (`never`/`current`/`error`, capability, last successful
+  timestamp, safe error). Paused, authentication-required and failed refreshes
+  label retained appointments stale; failed cache reads hide them and offer retry.
 
 Bidirectional edits and inbound write authority remain SYNC-03; `VTODO` task
 synchronization remains TASKDAV-01.

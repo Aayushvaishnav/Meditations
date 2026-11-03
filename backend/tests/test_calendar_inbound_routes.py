@@ -64,7 +64,9 @@ def test_overlay_of_empty_cache(client):
 
     connection_id = client.portal.call(create)
     body = client.get(f'/api/calendar/connections/{connection_id}/inbound/overlay').json()
-    assert body == {'connection_id': connection_id, 'items': [], 'unplaced': []}
+    assert body == {'connection_id': connection_id, 'items': [], 'unplaced': [],
+                    'reconciliation': {'state': 'never', 'capability': 'unknown',
+                                       'last_synced_at': None, 'last_error': None}}
 
 
 def test_resume_endpoint_runs_one_pass(client, monkeypatch):
@@ -78,3 +80,30 @@ def test_resume_endpoint_runs_one_pass(client, monkeypatch):
     response = client.post('/api/calendar/connections/resume')
     assert response.status_code == 204
     assert called == [None]
+
+
+def test_resume_local_only_does_not_access_the_credential_store(client, monkeypatch):
+    async def forbidden(_id):
+        raise AssertionError('local-only resume must not contact the vault')
+
+    monkeypatch.setattr(client.app.state.calendar_connection_manager.store, 'get', forbidden)
+    assert client.post('/api/calendar/connections/resume').status_code == 204
+
+
+def test_inbound_failure_status_preserves_last_successful_check(client):
+    from datetime import datetime
+    from app.models import CalendarInboundState
+    connection = seed(client)
+
+    async def mark_failure():
+        async with db.get_sessionmaker()() as session:
+            session.add(CalendarInboundState(connection_id=connection, capability='listing',
+                last_synced_at=datetime(2026, 1, 1), error_state='present',
+                last_error='Calendar refresh failed; the last successful cache is retained'))
+            await session.commit()
+
+    client.portal.call(mark_failure)
+    body = client.get(f'/api/calendar/connections/{connection}/inbound/overlay').json()
+    assert len(body['items']) == 1
+    assert body['reconciliation']['state'] == 'error'
+    assert body['reconciliation']['last_synced_at'] == '2026-01-01T00:00:00'

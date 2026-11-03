@@ -1,5 +1,5 @@
 import type { ImportedOverlay } from "@/api/calendar-overlay-types"
-import type { InboundOverlay } from "@/api/calendar-inbound-types"
+import { calendarInboundKey } from "./calendar-inbound"
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -714,7 +714,7 @@ export function useAIUsage(days: number, enabled: boolean) {
 export const calendarKey = ["calendar-connections"] as const
 const calendarMutationKey = ["calendar-control"] as const
 export function useCalendarConnections() {
-  return useQuery({ queryKey: calendarKey, queryFn: () => api.get<CalendarConnection[]>("/calendar/connections") })
+  return useQuery({ queryKey: calendarKey, queryFn: () => api.get<CalendarConnection[]>("/calendar/connections"), refetchInterval: 10_000 })
 }
 export function useCalendarStatus(id: string) {
   return useQuery({ queryKey: [...calendarKey, id, "status"], queryFn: () => api.get<CalendarSyncStatus>(`/calendar/connections/${id}/status`), refetchInterval: 10_000 })
@@ -728,7 +728,10 @@ export function useCalendarControl() {
   const mutation = useMutation({
     mutationKey: calendarMutationKey,
     mutationFn: ({ path, method = "post", body = {} }: { path: string; method?: "post" | "patch"; body?: Record<string, unknown> }) => api[method](`/calendar/connections${path}`, body),
-    onSettled: () => qc.invalidateQueries({ queryKey: calendarKey }),
+    onSettled: () => Promise.all([
+      qc.invalidateQueries({ queryKey: calendarKey }),
+      qc.invalidateQueries({ queryKey: calendarInboundKey }),
+    ]),
   })
   return { ...mutation, isPending: pending > 0 }
 }
@@ -817,45 +820,4 @@ export function useImportedCalendarOverlay(selection: OverlaySelection) {
 
 export { webhooksKey, useWebhooks, useWebhookDeliveries, useWebhookAction } from "./webhooks"
 
-// Inbound live events come from reconciled CalDAV caches; separate from imports and tasks
-export const calendarInboundKey = ["calendar-inbound"] as const
-
-export function useInboundOverlay(connectionId: string | null) {
-  return useQuery({
-    queryKey: [...calendarInboundKey, "overlay", connectionId],
-    enabled: connectionId !== null,
-    queryFn: () => {
-      if (connectionId === null) throw new Error("Choose a connected calendar first")
-      return api.get<InboundOverlay>(`/calendar/connections/${encodeURIComponent(connectionId)}/inbound/overlay`)
-    },
-  })
-}
-
-export function useCalendarResume() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationKey: [...calendarInboundKey, "resume"] as const,
-    mutationFn: () => api.post<void>("/calendar/connections/resume", {}),
-    onSettled: () => {
-      void qc.invalidateQueries({ queryKey: calendarInboundKey })
-      void qc.invalidateQueries({ queryKey: calendarKey })
-    },
-  })
-}
-
-/** App-resume signal: one reconciliation pass on window focus or return to visibility. */
-export function useResumeCalendarReconciliation() {
-  const resume = useCalendarResume()
-  useEffect(() => {
-    if (document.visibilityState !== "visible") return
-    const signal = () => {
-      if (document.visibilityState === "visible") resume.mutate()
-    }
-    window.addEventListener("focus", signal)
-    document.addEventListener("visibilitychange", signal)
-    return () => {
-      window.removeEventListener("focus", signal)
-      document.removeEventListener("visibilitychange", signal)
-    }
-  }, [resume])
-}
+export { calendarInboundKey, useInboundOverlay, useCalendarResume, useResumeCalendarReconciliation } from "./calendar-inbound"

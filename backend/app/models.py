@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date as Date
 from datetime import datetime
 
-from sqlalchemy import JSON, CheckConstraint, Column, Index, String, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, Column, Index, Integer, String, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.util import new_id, utc_now
@@ -334,6 +334,7 @@ class CalendarInboundState(SQLModel, table=True):
     __tablename__ = "calendar_inbound_state"
     __table_args__ = (
         CheckConstraint("capability IN ('unknown', 'sync_token', 'listing')", name="ck_calendar_inbound_capability"),
+        CheckConstraint("revision >= 0", name="ck_calendar_inbound_revision"),
         CheckConstraint("(capability = 'sync_token' AND sync_token IS NOT NULL) OR capability != 'sync_token'",
                         name="ck_calendar_inbound_token"),
         UniqueConstraint("connection_id", name="uq_calendar_inbound_connection"),
@@ -342,6 +343,7 @@ class CalendarInboundState(SQLModel, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
     connection_id: str = Field(foreign_key="calendar_connections.id", ondelete="CASCADE", index=True)
     capability: str = "unknown"
+    revision: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
     sync_token: str | None = None
     last_synced_at: datetime | None = None
     error_state: str = Field(default="none", sa_column=Column(String, nullable=False, server_default="none"))

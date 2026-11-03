@@ -1,16 +1,14 @@
 """Read-only projection of live reconciled remote events; tasks stay authoritative locally."""
-from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Literal
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from icalendar import Calendar
 from pydantic import BaseModel, Field
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.calendar_import.overlay import DateInterval, FloatingInterval, ProjectionError, TimedInterval, _interval, _value
+from app.calendar_import.overlay import DateInterval, FloatingInterval, ProjectionError, TimedInterval, _interval
 from app.calendar_import.parser import event_properties
-from app.models import CalendarInboundEvent
+from app.models import CalendarInboundEvent, CalendarInboundState
 
 
 class InboundOverlayItem(BaseModel):
@@ -34,10 +32,18 @@ class InboundOverlayUnplaced(BaseModel):
                     'unparsable_resource', 'unsupported_resource']
 
 
+class ReconciliationStatus(BaseModel):
+    state: Literal['never', 'current', 'error']
+    capability: Literal['unknown', 'sync_token', 'listing']
+    last_synced_at: str | None
+    last_error: str | None
+
+
 class InboundOverlay(BaseModel):
     connection_id: str
     items: list[InboundOverlayItem]
     unplaced: list[InboundOverlayUnplaced]
+    reconciliation: ReconciliationStatus
 
 
 def _project(event: CalendarInboundEvent) -> tuple[InboundOverlayItem | None, InboundOverlayUnplaced | None]:
@@ -73,11 +79,19 @@ async def inbound_overlay(session: AsyncSession, connection_id: str) -> InboundO
     rows = (await session.exec(select(CalendarInboundEvent).where(
         CalendarInboundEvent.connection_id == connection_id,
     ).order_by(CalendarInboundEvent.uid, CalendarInboundEvent.resource_url))).all()
-    result = InboundOverlay(connection_id=connection_id, items=[], unplaced=[])
+    state = (await session.exec(select(CalendarInboundState).where(
+        CalendarInboundState.connection_id == connection_id))).first()
+    status = ReconciliationStatus(
+        state=('error' if state is not None and state.error_state == 'present' else
+               'current' if state is not None and state.last_synced_at is not None else 'never'),
+        capability=state.capability if state is not None else 'unknown',
+        last_synced_at=state.last_synced_at.isoformat() if state is not None and state.last_synced_at else None,
+        last_error=state.last_error if state is not None else None)
+    result = InboundOverlay(connection_id=connection_id, items=[], unplaced=[], reconciliation=status)
     for row in rows:
         item, unplaced = _project(row)
         if item is not None:
             result.items.append(item)
-        else:
+        elif unplaced is not None:
             result.unplaced.append(unplaced)
     return result

@@ -30,6 +30,10 @@ class NotFoundError(CalDAVError):
     pass
 
 
+class UnsupportedSyncCollection(CalDAVError):
+    """The REPORT operation is explicitly unsupported; a full listing may be used."""
+
+
 class SyncTokenInvalid(CalDAVError):
     """The stored token expired server-side; rebuild the cache from a complete listing."""
 
@@ -70,22 +74,28 @@ class SyncChange:
 
 @dataclass(frozen=True)
 class SyncResult:
-    token: str | None  # None when the server supports no sync-token continuation
+    token: str
     changes: tuple[SyncChange, ...]
 
 
-def _prop_values(root: ET.Element, path: str) -> list[ET.Element]:
-    return [element for element in root.iter() if element.tag == path]
-
-
-def _report_multistatus(self: "CalDAVAdapter", content: bytes, collection_url: str) -> tuple[ET.Element, list[str]]:
-    """Parse a DAV multistatus root that may carry a sync-token child."""
+def _xml(content: bytes) -> ET.Element:
     if b"\x00" in content or re.search(br"<!\s*(?:DOCTYPE|ENTITY)\b", content, re.I):
         raise ProtocolError("DTD and entity declarations are forbidden")
     try:
         tree = ET.fromstring(content)
     except ET.ParseError as exc:
         raise ProtocolError("Malformed DAV XML") from exc
+    return tree
+
+
+def _token(value: str | None) -> str:
+    if not value or any(char.isspace() or ord(char) < 32 for char in value):
+        raise ProtocolError("Sync tokens cannot be empty or contain whitespace")
+    return value
+
+
+def _report_multistatus(content: bytes) -> tuple[ET.Element, str]:
+    tree = _xml(content)
     if tree.tag != f"{{{DAV}}}multistatus":
         raise ProtocolError("Expected DAV multistatus root")
     if any(element.tag in {f"{{{DAV}}}error", f"{{{DAV}}}number-of-matches-within-limits"}
@@ -94,17 +104,17 @@ def _report_multistatus(self: "CalDAVAdapter", content: bytes, collection_url: s
     tokens = []
     for child in tree:
         if child.tag == f"{{{DAV}}}sync-token":
-            if child.text is None or not child.text.strip():
-                raise ProtocolError("Empty DAV sync token")
-            tokens.append(child.text.strip())
+            if len(child):
+                raise ProtocolError("DAV sync token must be scalar")
+            tokens.append(_token(child.text))
             continue
         if child.tag == f"{{{DAV}}}responsedescription":
             continue
         if child.tag != f"{{{DAV}}}response":
             raise ProtocolError("Unexpected DAV multistatus child")
-    if len(tokens) > 1:
-        raise ProtocolError("Duplicate DAV sync token")
-    return tree, tokens
+    if len(tokens) != 1:
+        raise ProtocolError("Expected exactly one DAV sync token")
+    return tree, tokens[0]
 
 
 class CalDAVAdapter:
@@ -124,15 +134,25 @@ class CalDAVAdapter:
             raise ProtocolError("CalDAV URLs must be same-origin HTTP(S) URLs without credentials or fragments")
         return url
 
-    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+    async def _request(self, method: str, url: str, *, sync_report: bool = False, **kwargs) -> httpx.Response:
         try:
             response = await self.client.request(method, self._url(url), follow_redirects=False, **kwargs)
         except httpx.TransportError as exc:
             raise CalDAVError("CalDAV transport failure; write outcome may be uncertain") from exc
         if response.status_code in (401, 403):
-            if response.status_code == 403 and b"valid-sync-token" in response.content:
-                raise SyncTokenInvalid("The server no longer accepts the stored sync token")
+            if response.status_code == 403 and sync_report:
+                try:
+                    error = _xml(response.content)
+                except ProtocolError:
+                    error = ET.Element("invalid")
+                conditions = list(error)
+                if (error.tag == f"{{{DAV}}}error" and len(conditions) == 1
+                        and conditions[0].tag == f"{{{DAV}}}valid-sync-token"
+                        and not len(conditions[0]) and not (conditions[0].text or "").strip()):
+                    raise SyncTokenInvalid("The server no longer accepts the stored sync token")
             raise AuthenticationError("CalDAV authentication or permission denied")
+        if sync_report and response.status_code in (405, 501):
+            raise UnsupportedSyncCollection("The server does not support sync-collection REPORT")
         if response.status_code == 404:
             raise NotFoundError("CalDAV resource not found")
         if response.status_code == 412:
@@ -267,14 +287,23 @@ class CalDAVAdapter:
 
     async def supports_sync_collection(self, calendar_url: str) -> bool:
         rows = await self._properties(calendar_url, 0, [(DAV, "supported-report-set")])
-        reports = rows[0][1].get(f"{{{DAV}}}supported-report-set") if rows else None
+        matches = [props for url, props in rows if url == self._url(calendar_url)]
+        if len(matches) != 1:
+            raise ProtocolError("Expected exactly one requested collection response")
+        reports = matches[0].get(f"{{{DAV}}}supported-report-set")
         if reports is None:
-            raise ProtocolError("Missing supported-report-set property")
-        for report in reports.findall(f"{{{DAV}}}supported-report"):
-            grammar = report.find(f"{{{DAV}}}report")
-            if grammar is not None and any(child.tag == f"{{{DAV}}}sync-collection" for child in grammar):
-                return True
-        return False
+            return False
+        supported = False
+        for report in reports:
+            if (report.tag != f"{{{DAV}}}supported-report" or len(report) != 1
+                    or (report.text or "").strip()):
+                raise ProtocolError("Invalid supported-report-set shape")
+            grammar = report[0]
+            if (grammar.tag != f"{{{DAV}}}report" or len(grammar) != 1 or len(grammar[0])
+                    or (grammar.text or "").strip() or (grammar[0].text or "").strip()):
+                raise ProtocolError("Invalid supported report shape")
+            supported |= grammar[0].tag == f"{{{DAV}}}sync-collection"
+        return supported
 
     async def sync_collection(self, calendar_url: str, token: str | None = None) -> SyncResult:
         """RFC 6578 incremental collection report; token=None requests the initial set."""
@@ -282,20 +311,18 @@ class CalDAVAdapter:
         root = ET.Element(f"{{{DAV}}}sync-collection")
         sync = ET.SubElement(root, f"{{{DAV}}}sync-token")
         if token is not None:
-            if not token or any(ord(char) <= 32 for char in token):
-                raise ProtocolError("Sync tokens cannot be empty or contain whitespace")
-            sync.text = token
+            sync.text = _token(token)
+        ET.SubElement(root, f"{{{DAV}}}sync-level").text = "1"
         prop = ET.SubElement(root, f"{{{DAV}}}prop")
         ET.SubElement(prop, f"{{{DAV}}}getetag")
-        response = await self._request("REPORT", url, content=ET.tostring(root), headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"})
+        response = await self._request("REPORT", url, sync_report=True, content=ET.tostring(root), headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"})
         if response.status_code != 207:
             raise ProtocolError(f"Expected DAV multistatus, received {response.status_code}")
-        tree, tokens = _report_multistatus(self, response.content, url)
-        if token is not None and not tokens:
-            raise ProtocolError("Incremental sync-collection responses require a new sync token")
+        tree, new_token = _report_multistatus(response.content)
         collection = urlsplit(url)
         parent_path = unquote(collection.path).rstrip("/") + "/"
         changes = []
+        seen = set()
         for item in tree:
             if item.tag != f"{{{DAV}}}response":
                 continue
@@ -305,26 +332,55 @@ class CalDAVAdapter:
             hrefs = item.findall(f"{{{DAV}}}href")
             if len(hrefs) != 1 or not hrefs[0].text:
                 raise ProtocolError("DAV response requires one href")
-            resource_url = self._url(hrefs[0].text, url)
-            if item.find(f"{{{DAV}}}status") is not None:
-                # A member-level 404 status marks a reported deletion
-                code = _status(item.findtext(f"{{{DAV}}}status"))
+            href = hrefs[0]
+            if (len(href) or any(char.isspace() or ord(char) < 32 for char in href.text)
+                    or "?" in href.text or "#" in href.text
+                    or any(part in (".", "..") for part in unquote(urlsplit(href.text).path).split("/"))):
+                raise ProtocolError("Invalid DAV member href")
+            resource_url = self._url(href.text, url)
+            target = urlsplit(resource_url)
+            path = unquote(target.path)
+            member = path[len(parent_path):] if path.startswith(parent_path) else ""
+            if target.query or not member or "/" in member or "\\" in member:
+                raise ProtocolError("DAV response is not an immediate collection member")
+            if path in seen:
+                raise ProtocolError("Duplicate DAV resource URL")
+            seen.add(path)
+            statuses = item.findall(f"{{{DAV}}}status")
+            propstats = item.findall(f"{{{DAV}}}propstat")
+            if statuses:
+                if len(statuses) != 1 or propstats or len(statuses[0]):
+                    raise ProtocolError("Invalid DAV resource status shape")
+                code = _status(statuses[0].text)
                 if code != 404:
                     raise ProtocolError(f"Unexpected DAV resource status {code}")
                 changes.append(SyncChange(resource_url, None))
                 continue
-            propstats = item.findall(f"{{{DAV}}}propstat")
-            if len(propstats) != 1:
-                raise ProtocolError("Sync-collection responses require exactly one propstat")
-            code = _status(propstats[0].findtext(f"{{{DAV}}}status"))
-            values = propstats[0].find(f"{{{DAV}}}prop")
-            if code != 200 or values is None:
-                raise ProtocolError(f"Unexpected DAV property status {code}")
-            etags = [value for value in values if value.tag == f"{{{DAV}}}getetag"]
-            if len(etags) != 1 or etags[0].text is None:
+            if not propstats:
+                raise ProtocolError("Missing DAV propstat")
+            properties = set()
+            etag = None
+            for part in propstats:
+                statuses = part.findall(f"{{{DAV}}}status")
+                values = part.findall(f"{{{DAV}}}prop")
+                if (len(statuses) != 1 or len(values) != 1 or len(statuses[0])
+                        or any(child.tag not in {f"{{{DAV}}}{name}" for name in ("status", "prop", "responsedescription")} for child in part)):
+                    raise ProtocolError("Invalid DAV propstat children")
+                code = _status(statuses[0].text)
+                if code not in (200, 404):
+                    raise ProtocolError(f"Unexpected DAV property status {code}")
+                for value in values[0]:
+                    if value.tag in properties:
+                        raise ProtocolError("Duplicate or contradictory DAV property")
+                    properties.add(value.tag)
+                    if value.tag == f"{{{DAV}}}getetag":
+                        if code != 200 or len(value):
+                            raise ProtocolError("Sync changes require a scalar successful ETag")
+                        etag = _strong_etag(value.text)
+            if etag is None:
                 raise ProtocolError("Sync-collection changes require one ETag")
-            changes.append(SyncChange(resource_url, _strong_etag(etags[0].text)))
-        return SyncResult(tokens[0] if tokens else None, tuple(changes))
+            changes.append(SyncChange(resource_url, etag))
+        return SyncResult(new_token, tuple(changes))
 
     async def get_resource(self, url: str) -> RemoteResource:
         response = await self._request("GET", url)

@@ -15,8 +15,9 @@ work-block snapshot, or [outbound CalDAV](calendar-sync.md) for supported ongoin
 publication. File imports and downloads do not refresh automatically. Select an
 imported destination in Calendar to show its standalone appointments as a
 [read-only overlay](calendar-import.md#show-appointments-on-calendar). Recurring series stay in
-the source inventory without occurrence expansion. Live CalDAV inbound events
-and automatic URL refresh remain future work.
+the source inventory without occurrence expansion. Connected CalDAV calendars
+can also be mirrored through the [read-only Live calendar overlay](calendar-sync.md#mirror-remote-events-read-only).
+Automatic ICS URL refresh remains future work.
 
 Both subscription directions are one-way. Subscription edits cannot write back
 to Journal, alter local tasks, record focus, change scores, or trigger recurring

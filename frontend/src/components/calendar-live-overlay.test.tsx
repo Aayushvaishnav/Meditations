@@ -11,7 +11,7 @@ const connections = { data: [
 
 vi.mock("@/hooks/api", () => ({
   useCalendarConnections: () => connections,
-  useInboundOverlay: (id: string | null) => (id === null ? { data: undefined } : { data: overlays.get(id), isSuccess: overlays.has(id) }),
+  useInboundOverlay: (selection: {kind: string; id?: string}) => (selection.kind === "none" ? { data: undefined } : { data: overlays.get(selection.id!), isSuccess: overlays.has(selection.id!) }),
 }))
 
 import { CalendarLiveOverlay, LiveEventChip, LiveEventDetails } from "./calendar-live-overlay"
@@ -32,6 +32,7 @@ describe("live calendar overlay", () => {
   it("renders mirrored items and an unplaced count after selection", async () => {
     overlays.set("c1", {
       connection_id: "c1",
+      reconciliation: {state: "current", capability: "listing", last_synced_at: "2026-01-15T10:00:00", last_error: null},
       items: [dentist],
       unplaced: [{ connection_id: "c1", id: "e2", uid: "u2", summary: "Series", reason: "recurrence" }],
     })

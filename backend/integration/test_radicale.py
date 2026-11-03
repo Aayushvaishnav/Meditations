@@ -390,3 +390,26 @@ async def test_inbound_reconciliation_survives_restart_and_offline_recovery(conn
     await control.sync_now(connected.connection.id)
     rows_after = await inbound_rows(connected)
     assert [row.uid for row in rows_after] == [row.uid for row in rows_before]
+
+
+async def test_inbound_expired_radicale_token_rebuild_removes_deleted_members(connected):
+    from sqlmodel import select
+    from app.models import CalendarInboundState
+
+    await put_external_event(connected)
+    await connected.control.sync_now(connected.connection.id)
+    async with connected.sessions() as session:
+        state = (await session.exec(select(CalendarInboundState).where(
+            CalendarInboundState.connection_id == connected.connection.id))).one()
+        state.sync_token = 'http://radicale.org/ns/sync/' + '0' * 64
+        session.add(state)
+        await session.commit()
+    async with open_adapter(connected.server.url, CREDENTIALS) as adapter:
+        resource = (await adapter.list_resources(connected.server.calendar_url))[0]
+        await adapter.delete_resource(resource.url, etag=resource.etag)
+    await connected.control.sync_now(connected.connection.id)
+    assert await inbound_rows(connected) == []
+    async with connected.sessions() as session:
+        state = (await session.exec(select(CalendarInboundState).where(
+            CalendarInboundState.connection_id == connected.connection.id))).one()
+    assert state.error_state == 'none' and not state.sync_token.endswith('0' * 64)

@@ -128,9 +128,9 @@ function DayCell({
       {tasks.slice(0, 4).map((t) => (
         <TaskChip key={t.id} task={t} />
       ))}
-      {(tasks.length > 4 || blocks.length > 3 || imported.length + live.length > 2) && (
+      {(tasks.length > 4 || blocks.length > 3 || imported.length > 2 || live.length > 2) && (
         <button onClick={() => onOpen(day)} className="px-1 text-left text-[10px] text-muted-foreground hover:text-foreground">
-          +{Math.max(0, tasks.length - 4) + Math.max(0, blocks.length - 3) + Math.max(0, imported.length + live.length - 2)} more
+          +{Math.max(0, tasks.length - 4) + Math.max(0, blocks.length - 3) + Math.max(0, imported.length - 2) + Math.max(0, live.length - 2)} more
         </button>
       )}
     </div>

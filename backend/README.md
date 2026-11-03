@@ -341,7 +341,7 @@ no import endpoint. Regression tests use in-memory fixtures except the isolated
 ## Schema upgrades and recurring tasks
 
 Schema upgrades run automatically before the API starts. Fresh and existing
-unversioned databases reach schema v13 through the same versioned migrations.
+unversioned databases reach schema v15 through the same versioned migrations.
 Version 3 tracks pending and ready search vectors for recovery after offline
 embedding or extension failures. Version 5 adds date-only task deadlines without
 rewriting legacy due instants; a CHECK prevents conflicting date/timed values.
@@ -350,7 +350,8 @@ Version 7 adds IANA timezone metadata and all-day intervals, retaining legacy
 instants as timed UTC blocks without shifting them.
 Version 15 adds the read-only inbound calendar cache
 (`calendar_inbound_state` per connection, `calendar_inbound_events` per remote
-resource); token capability requires a persisted token, and stored components
+resource); the state includes a monotonic reconciliation revision. Token
+capability requires a persisted token, and stored components
 require parsed projection fields.
 A failed upgrade leaves the pending changes rolled back and reports the cause;
 resolve it and restart the backend. Opening a database written by a newer app
@@ -637,13 +638,20 @@ OS network-change listener.
 (schema v15 cache) from enabled, verified connections. Servers offering
 RFC 6578 sync-collection REPORTs reconcile incrementally with stored tokens;
 rejected tokens rebuild the cache within the same pass. Other servers use
-complete Depth-1 listings, which remain the only deletion authority — no
-deletion is inferred from a partial or failed batch, and each batch commits
-atomically with its durable state. Reconciliation runs at startup, on the
+complete Depth-1 listings. Deletions require a completed inventory or explicit
+token-report tombstones; no partial or failed batch can remove cache rows. Initial token reports
+replace the complete inventory, including removed members, and GET ETags must
+match their reports. Writer-locked cursor/connection comparisons prevent stale
+batches from overwriting newer state; cached IDs remain stable. Changing the
+selected calendar clears its previous cache/token. Each batch commits atomically
+with its durable state. The worker starts with the backend, runs on the
 30-second worker interval, on Sync now, and on app resume
 (`POST /api/calendar/connections/resume`). Mirrored events surface through
-`GET /api/calendar/connections/{id}/inbound/overlay` and never modify task
-data; unparsable resources stay cached with an explicit state.
+`GET /api/calendar/connections/{id}/inbound/overlay` with explicit freshness/error
+status and never modify task data; unparsable resources stay cached with an
+explicit state. Startup/restore still require verification and enablement before
+remote activity; local-only resume never accesses the vault. A malformed report
+fails; only an explicitly unsupported REPORT (405/501) selects listing fallback.
 
 ### Settings and explicit publication (CAL-06)
 
