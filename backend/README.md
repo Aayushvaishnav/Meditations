@@ -348,6 +348,10 @@ rewriting legacy due instants; a CHECK prevents conflicting date/timed values.
 Version 6 adds task-owned timed work blocks without deriving any from deadlines.
 Version 7 adds IANA timezone metadata and all-day intervals, retaining legacy
 instants as timed UTC blocks without shifting them.
+Version 15 adds the read-only inbound calendar cache
+(`calendar_inbound_state` per connection, `calendar_inbound_events` per remote
+resource); token capability requires a persisted token, and stored components
+require parsed projection fields.
 A failed upgrade leaves the pending changes rolled back and reports the cause;
 resolve it and restart the backend. Opening a database written by a newer app
 requires upgrading the app.
@@ -628,6 +632,18 @@ checks and packaged discovery against a local test server are covered in the
 [calendar guide](../docs/calendar-sync.md#developer-verification); native vault
 and full desktop verification remain outstanding. Fixed-interval retries have no exponential backoff or
 OS network-change listener.
+
+`app/calendar_sync/inbound.py` additionally mirrors read-only external events
+(schema v15 cache) from enabled, verified connections. Servers offering
+RFC 6578 sync-collection REPORTs reconcile incrementally with stored tokens;
+rejected tokens rebuild the cache within the same pass. Other servers use
+complete Depth-1 listings, which remain the only deletion authority — no
+deletion is inferred from a partial or failed batch, and each batch commits
+atomically with its durable state. Reconciliation runs at startup, on the
+30-second worker interval, on Sync now, and on app resume
+(`POST /api/calendar/connections/resume`). Mirrored events surface through
+`GET /api/calendar/connections/{id}/inbound/overlay` and never modify task
+data; unparsable resources stay cached with an explicit state.
 
 ### Settings and explicit publication (CAL-06)
 

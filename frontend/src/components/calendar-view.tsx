@@ -18,8 +18,10 @@ import { deadlineCalendarDate, deadlineCutoff, deadlineDayKey, localDayParam, mo
 import { toast } from "sonner"
 import { blockOnDay, blockStartDay, moveTimeBlock, shiftBlockStart } from "@/lib/time-blocks"
 import type { ImportedOverlayItem } from "@/api/calendar-overlay-types"
+import type { InboundOverlayItem } from "@/api/calendar-inbound-types"
 import { importedEventOnDay } from "@/lib/calendar-overlay"
 import { CalendarImportedOverlay, ImportedEventChip, ImportedEventDetails } from "./calendar-imported-overlay"
+import { CalendarLiveOverlay, LiveEventChip, LiveEventDetails } from "./calendar-live-overlay"
 import { CalendarExport } from "./calendar-export"
 import { TimeBlockChip, TimeBlockDetails } from "./calendar-time-blocks"
 import type { Task, TimeBlock } from "@/api/types"
@@ -77,11 +79,13 @@ function DayCell({
   taskById,
   pending,
   imported,
+  live,
 }: {
   day: Date
   inMonth: boolean
   tasks: Task[]
   imported: ImportedOverlayItem[]
+  live: InboundOverlayItem[]
   blocks: TimeBlock[]
   taskById: Map<string, Task>
   pending: boolean
@@ -120,12 +124,13 @@ function DayCell({
         <TimeBlockChip key={block.id} block={block} day={localDayParam(day)} task={taskById.get(block.task_id)!} onOpen={() => onOpen(day)} disabled={pending} />
       ))}
       {imported.slice(0, 2).map(event => <ImportedEventChip key={event.id} event={event} onOpen={() => onOpen(day)} />)}
+      {live.slice(0, 2).map(event => <LiveEventChip key={event.id} event={event} onOpen={() => onOpen(day)} />)}
       {tasks.slice(0, 4).map((t) => (
         <TaskChip key={t.id} task={t} />
       ))}
-      {(tasks.length > 4 || blocks.length > 3 || imported.length > 2) && (
+      {(tasks.length > 4 || blocks.length > 3 || imported.length + live.length > 2) && (
         <button onClick={() => onOpen(day)} className="px-1 text-left text-[10px] text-muted-foreground hover:text-foreground">
-          +{Math.max(0, tasks.length - 4) + Math.max(0, blocks.length - 3) + Math.max(0, imported.length - 2)} more
+          +{Math.max(0, tasks.length - 4) + Math.max(0, blocks.length - 3) + Math.max(0, imported.length + live.length - 2)} more
         </button>
       )}
     </div>
@@ -234,6 +239,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
       {blocksQuery.isPending && <p role="status" className="mb-2 text-sm text-muted-foreground">Loading work blocks…</p>}
       {blocksQuery.isError && <div role="alert" className="mb-2 text-sm">Could not load work blocks. <Button variant="outline" size="sm" onClick={() => blocksQuery.refetch()}>Retry</Button></div>}
       <CalendarImportedOverlay>{imported => <>
+      <CalendarLiveOverlay>{(live) => <>
       <CalendarExport key={JSON.stringify([cursor.getFullYear(), cursor.getMonth(), scope.kind, scope.id, search])}
         blocks={blocks.filter(block => weeks.flat().some(({ day, inMonth }) => inMonth && blockOnDay(block, day)))}
         taskById={taskById} unavailable={blocksQuery.isPending || blocksQuery.isError || replaceBlock.isPending} />
@@ -248,7 +254,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
         </div>
         <div className="group/grid grid grid-cols-7 gap-1">
           {weeks.flat().map(({ day, inMonth, tasks: dayTasks }, i) => (
-            <DayCell key={i} imported={imported.filter(event => importedEventOnDay(event, day))} day={day} inMonth={inMonth} tasks={dayTasks} blocks={blocks.filter(block => blockOnDay(block, day))} taskById={taskById} pending={replaceBlock.isPending} onOpen={setOpenDay} />
+            <DayCell key={i} imported={imported.filter(event => importedEventOnDay(event, day))} live={live.filter(event => importedEventOnDay(event, day))} day={day} inMonth={inMonth} tasks={dayTasks} blocks={blocks.filter(block => blockOnDay(block, day))} taskById={taskById} pending={replaceBlock.isPending} onOpen={setOpenDay} />
           ))}
         </div>
       </DndContext>
@@ -271,6 +277,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
           </label>
           <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
             {openDay && imported.filter(event => importedEventOnDay(event, openDay)).map(event => <ImportedEventDetails key={event.id} event={event} />)}
+            {openDay && live.filter(event => importedEventOnDay(event, openDay)).map(event => <LiveEventDetails key={event.id} event={event} />)}
             {openDay && blocks.filter(block => blockOnDay(block, openDay)).map(block => (
               <TimeBlockDetails key={`${block.id}:${block.updated_at}`} block={block} task={taskById.get(block.task_id)!} onMove={moveBlock} pending={replaceBlock.isPending} />
             ))}
@@ -293,6 +300,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
           </div>
         </DialogContent>
       </Dialog>
+      </>}</CalendarLiveOverlay>
       </>}</CalendarImportedOverlay>
     </div>
   )

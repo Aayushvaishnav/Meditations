@@ -329,6 +329,52 @@ class CalendarImportEvent(SQLModel, table=True):
     component_index: int
 
 
+class CalendarInboundState(SQLModel, table=True):
+    """Per-connection inbound reconciliation cache; token is None in ETag-listing mode."""
+    __tablename__ = "calendar_inbound_state"
+    __table_args__ = (
+        CheckConstraint("capability IN ('unknown', 'sync_token', 'listing')", name="ck_calendar_inbound_capability"),
+        CheckConstraint("(capability = 'sync_token' AND sync_token IS NOT NULL) OR capability != 'sync_token'",
+                        name="ck_calendar_inbound_token"),
+        UniqueConstraint("connection_id", name="uq_calendar_inbound_connection"),
+    )
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    connection_id: str = Field(foreign_key="calendar_connections.id", ondelete="CASCADE", index=True)
+    capability: str = "unknown"
+    sync_token: str | None = None
+    last_synced_at: datetime | None = None
+    error_state: str = Field(default="none", sa_column=Column(String, nullable=False, server_default="none"))
+    last_error: str | None = None
+
+
+class CalendarInboundEvent(SQLModel, table=True):
+    """Cached copy of one remote VEVENT resource; the server stays authoritative."""
+    __tablename__ = "calendar_inbound_events"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "resource_url", name="uq_calendar_inbound_resource"),
+        CheckConstraint("component_state IN ('stored', 'unparsable')", name="ck_calendar_inbound_component"),
+        CheckConstraint("(component_state = 'stored' AND identity IS NOT NULL AND uid IS NOT NULL "
+                        "AND summary IS NOT NULL AND component IS NOT NULL AND component_index IS NOT NULL) OR "
+                        "(component_state = 'unparsable' AND identity IS NULL AND uid IS NULL AND summary IS NULL "
+                        "AND component IS NULL AND component_index IS NULL)",
+                        name="ck_calendar_inbound_content"),
+    )
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    connection_id: str = Field(foreign_key="calendar_connections.id", ondelete="CASCADE", index=True)
+    resource_url: str
+    etag: str
+    content: str  # raw resource text; retained even when unparsable
+    identity: str | None = None
+    uid: str | None = None
+    summary: str | None = None
+    component: str | None = None
+    component_index: int | None = None
+    component_state: str = "stored"
+    fetched_at: datetime = Field(default_factory=utc_now)
+
+
 class WebhookEndpoint(SQLModel, table=True):
     __tablename__ = "webhook_endpoints"
     id: str = Field(default_factory=new_id, primary_key=True)

@@ -10,6 +10,9 @@ import App from "@/App"
 
 const mocks = vi.hoisted(() => ({ tasks: [] as Task[], blocks: [] as TimeBlock[], exportCalendar: vi.fn(), blocksPending: false, blocksError: false, replacePending: false, replace: vi.fn(), refetch: vi.fn(), create: vi.fn(), update: vi.fn(), dragEnd: (_event: DragEndEvent) => {} }))
 vi.mock("@/hooks/api", () => ({
+  useCalendarConnections: () => ({ data: [], isSuccess: true }),
+  useInboundOverlay: () => ({ data: undefined }),
+  useResumeCalendarReconciliation: () => {},
   useImportedCalendars: () => ({ data: [], isSuccess: true }),
   useImportedCalendarOverlay: () => ({ data: undefined }),
   useCalendarExport: () => ({ mutate: mocks.exportCalendar, isPending: false, isSuccess: false, isError: false }),

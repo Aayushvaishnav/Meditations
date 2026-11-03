@@ -10,7 +10,7 @@ import { QuickAdd } from "@/components/quick-add"
 import { Sidebar } from "@/components/sidebar"
 import { TaskSections } from "@/components/task-sections"
 import { KanbanSkeleton, TaskListSkeleton } from "@/components/skeletons"
-import { useLists, useTasks } from "@/hooks/api"
+import { useLists, useTasks, useResumeCalendarReconciliation } from "@/hooks/api"
 import { THEMES, useUi } from "@/stores/ui"
 import { lazy, Suspense, useEffect } from "react"
 import { SectionLoading } from "@/components/section-loading"
@@ -51,6 +51,7 @@ export default function App() {
   const search = useUi((s) => s.search)
   const tasks = useTasks()
   const lists = useLists()
+  useResumeCalendarReconciliation() // app resume triggers one calendar reconciliation pass
 
   return (
     <MotionConfig reducedMotion="user">

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.migrations.webhooks import migrate_webhooks
+from app.migrations.calendar_inbound import migrate_calendar_inbound
 
 import asyncio
 import logging
@@ -94,6 +95,7 @@ MIGRATIONS: tuple[Callable[[AsyncConnection], Awaitable[None]], ...] = (
     migrate_calendar_sync_status,
     migrate_calendar_import,
     migrate_webhooks,
+    migrate_calendar_inbound,
 )
 LATEST_VERSION = len(MIGRATIONS)
 

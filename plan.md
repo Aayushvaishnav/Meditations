@@ -867,8 +867,53 @@ appointments. Selection changes never display the previous source's response.
 The overlay lives only in the independent `['calendar-imports']` query family;
 reimport/removal invalidates it without task/telemetry invalidations. There is no
 new schema, persistent preference, dependency or remote fetch. Files are snapshots;
-updates require explicit reimport. Live CalDAV inbound reconciliation remains
-SYNC-02, and URL subscriptions remain a separate future feature.
+updates require explicit reimport. URL subscriptions remain a separate future
+feature; live inbound reconciliation is SYNC-02 below.
+
+
+#### Capability-aware inbound reconciliation (SYNC-02)
+
+`app/calendar_sync/inbound.py` mirrors read-only external events from each
+enabled, verified CalDAV connection into a dedicated cache (schema v15:
+`calendar_inbound_state` + `calendar_inbound_events`, one row per remote
+resource with its ETag, raw text and parsed projection fields). Mirrored events
+never create or modify tasks, deadlines, focus, or scores.
+
+- **Capability probe**: on first reconciliation, a `supported-report-set`
+  PROPFIND selects RFC 6578 `sync-collection` REPORT when the server offers it
+  (Radicale 3.9 does); otherwise the connection reconciles through complete
+  Depth-1 ETag listings. The persisted capability is sticky; the probe runs
+  once per connection.
+- **Token passes**: incremental REPORTs return changed/deleted hrefs plus a new
+  token; changed resources are GET-ed and validated with the strict import
+  parser. A complete batch (report + all fetches) commits atomically together
+  with the new token; any transport/protocol failure leaves the previous cache
+  and token untouched. Rejected tokens (`403 valid-sync-token`) recover within
+  the same pass through an initial (token-less) sync-collection report, which
+  rebuilds the cache and mints a fresh token.
+- **Listing mode**: a complete listing is the deletion authority — cached URLs
+  absent from a finished listing are removed; unchanged resources are retained
+  verbatim without refetching. No deletion is ever inferred from a partial or
+  failed batch, so cache windows cannot mistake out-of-range events for
+  deletions.
+- **Unparsable resources** (multiple VEVENTs per resource, invalid iCalendar)
+  keep their raw text with `component_state='unparsable'` and surface as
+  `unparsable_resource` in the overlay instead of failing the batch.
+- **Triggers**: reconciliation runs with every queue-worker pass — backend
+  startup, the 30-second periodic loop, manual **Sync now**, and app resume
+  (`POST /api/calendar/connections/resume`, driven by window focus/visibility
+  through `useResumeCalendarReconciliation`). Authentication failures demote
+  the connection to `authentication_required`; operational failures record
+  `error_state` on the inbound state row and retry on the next pass.
+- **Overlay**: `GET /api/calendar/connections/{id}/inbound/overlay` reuses the
+  SYNC-01 projection contract (timed/floating/all-day intervals, explicit
+  unplaced reasons, opaque recurrence) from cached snapshots. The calendar
+  renders mirrored events as distinct read-only chips under a separate
+  "Live calendar" selector, independent of task filters, deadlines, work
+  blocks, and imported overlays.
+
+Bidirectional edits and inbound write authority remain SYNC-03; `VTODO` task
+synchronization remains TASKDAV-01.
 
 
 #### Read-only subscription evaluation (ICS-03)
@@ -1108,8 +1153,12 @@ explicitly. DTD/entity declarations are rejected. Authentication, missing
 resources, precondition conflicts, transport failures, and protocol failures
 remain distinct. There are no hidden retries: transport or response failures
 after a mutation can leave an uncertain outcome for CAL-04 to reconcile.
-Optional sync tokens are not used; complete Depth-1 listings provide the initial
-ETag reconciliation capability. No provider-specific support is claimed.
+Inbound reconciliation (SYNC-02) additionally issues a `sync-collection`
+REPORT with a strict multistatus parser that accepts the `D:sync-token` child,
+maps `403` + `D:valid-sync-token` to a recoverable `SyncTokenInvalid`, and
+probes `supported-report-set` for capability detection. Complete Depth-1
+listings remain the fallback and the deletion authority in listing mode.
+No provider-specific support is claimed beyond tested Radicale interoperability.
 
 `service.py` compares a complete listing against explicitly supplied link
 snapshots. `worker.py` exposes one read-only inspection pass with an injected

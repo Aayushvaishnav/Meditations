@@ -1,7 +1,10 @@
-import type { ImportedOverlayItem } from "@/api/calendar-overlay-types"
+import type { ImportedEventInterval } from "@/api/calendar-overlay-types"
 import { localDayParam } from "./task-deadlines"
 
-export function importedEventOnDay(event: ImportedOverlayItem, day: Date): boolean {
+// Minimal shape shared by imported-file and live-mirrored overlay items
+type OverlayLike = { interval: ImportedEventInterval }
+
+export function importedEventOnDay(event: OverlayLike, day: Date): boolean {
   const { kind, start, end } = event.interval
   const label = localDayParam(day)
   if (kind === "date") return start <= label && label < end
@@ -23,7 +26,7 @@ export function importedEventOnDay(event: ImportedOverlayItem, day: Date): boole
     : from < upper.getTime() && to > lower.getTime()
 }
 
-export function importedEventLabel(event: ImportedOverlayItem): string {
+export function importedEventLabel(event: OverlayLike): string {
   const { kind, start, end } = event.interval
   if (kind === "date") return `All day: ${start} to ${end} (end exclusive)`
   if (kind === "floating") return `${start.replace("T", " ")} to ${end.replace("T", " ")} (floating local time)`

@@ -316,3 +316,77 @@ def test_packaged_backend_discovery(radicale_server):
     from scripts.smoke_sidecar import smoke
 
     smoke(Path(binary), calendar_server_url=radicale_server.url)
+
+
+def external_ics(uid='external-1', summary='External planning'):
+    return (f'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//External//EN\r\n'
+            f'BEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20260101T000000Z\r\n'
+            f'SUMMARY:{summary}\r\nDTSTART:20260115T090000Z\r\nDTEND:20260115T100000Z\r\n'
+            f'END:VEVENT\r\nEND:VCALENDAR\r\n')
+
+
+async def put_external_event(env, uid='external-1', summary='External planning'):
+    async with open_adapter(env.server.url, CREDENTIALS) as adapter:
+        name = 'external-' + uid + '.ics'
+        url = env.server.calendar_url + name
+        existing = [resource for resource in await adapter.list_resources(env.server.calendar_url)
+                    if resource.url == url]
+        await adapter.put_resource(url, external_ics(uid, summary).encode(),
+                                   etag=existing[0].etag if existing else None)
+
+
+async def inbound_rows(env):
+    from sqlmodel import select
+    from app.models import CalendarInboundEvent
+    async with env.sessions() as session:
+        return (await session.exec(select(CalendarInboundEvent).where(
+            CalendarInboundEvent.connection_id == env.connection.id))).all()
+
+
+async def test_inbound_sync_token_reconciliation_and_deletions(connected):
+    from sqlmodel import select
+    from app.models import CalendarInboundState
+    await put_external_event(connected, 'external-1')
+    await put_external_event(connected, 'external-2', 'Second event')
+    await connected.control.sync_now(connected.connection.id)
+    rows = await inbound_rows(connected)
+    assert {row.uid for row in rows} == {'external-1', 'external-2'}
+
+    async with connected.sessions() as session:
+        state = (await session.exec(select(CalendarInboundState).where(
+            CalendarInboundState.connection_id == connected.connection.id))).first()
+    assert state.capability == 'sync_token' and state.sync_token  # Radicale 3.9 supports sync-collection
+
+    async with open_adapter(connected.server.url, CREDENTIALS) as adapter:
+        resources = await adapter.list_resources(connected.server.calendar_url)
+        target = next(r for r in resources if r.url.endswith('external-external-1.ics'))
+        await adapter.delete_resource(target.url, etag=target.etag)
+    await connected.control.sync_now(connected.connection.id)
+    assert {row.uid for row in await inbound_rows(connected)} == {'external-2'}
+
+    await put_external_event(connected, 'external-2', 'Renamed event')
+    await connected.control.sync_now(connected.connection.id)
+    assert [row.summary for row in await inbound_rows(connected)] == ['Renamed event']
+
+
+async def test_inbound_reconciliation_survives_restart_and_offline_recovery(connected):
+    await put_external_event(connected)
+    await connected.control.sync_now(connected.connection.id)
+    rows_before = await inbound_rows(connected)
+    assert len(rows_before) == 1
+    connected.server.process.stop()
+    try:
+        await connected.control.sync_now(connected.connection.id)  # fails; cache stays intact
+        rows_during = await inbound_rows(connected)
+        assert [row.uid for row in rows_during] == [row.uid for row in rows_before]
+    finally:
+        connected.server.process.restart()
+    await reopen_database(connected)
+    manager = ConnectionManager(connected.store)
+    async with connected.sessions() as session:
+        await manager.verify(session, connected.connection.id)
+    control = CalendarControls(QueueWorker(connected.sessions, manager))
+    await control.enable(connected.connection.id, True)
+    await control.sync_now(connected.connection.id)
+    rows_after = await inbound_rows(connected)
+    assert [row.uid for row in rows_after] == [row.uid for row in rows_before]

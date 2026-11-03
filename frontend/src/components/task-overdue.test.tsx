@@ -8,6 +8,8 @@ import { KanbanBoard } from "./kanban-board"
 import { CalendarView } from "./calendar-view"
 
 vi.mock("@/hooks/api", () => ({
+  useCalendarConnections: () => ({ data: [], isSuccess: true }),
+  useInboundOverlay: () => ({ data: undefined }),
   useImportedCalendars: () => ({ data: [], isSuccess: true }),
   useImportedCalendarOverlay: () => ({ data: undefined }),
   useCalendarExport: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false, isError: false }),

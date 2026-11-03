@@ -11,6 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.calendar_sync.adapter import AuthenticationError, CalDAVError
 from app.calendar_sync.connections import ConnectionManager
 from app.calendar_sync.credentials import CredentialStoreError
+from app.calendar_sync.inbound import reconcile_connections
 from app.calendar_sync.outbound import OutboundFailure, OutboundService
 from app.calendar_sync.worker import inspect_once
 from app.models import CalendarConnection, CalendarDispatch, CalendarLink
@@ -51,6 +52,11 @@ class QueueWorker:
                         await inspect_once(self.sessions, self._adapter, connection_id=selected_id)
                 except (CalDAVError, CredentialStoreError, ValueError):
                     logger.warning('Calendar inspection unavailable; retry on the next queue pass')
+                try:
+                    async with self.manager.lock(selected_id):
+                        await reconcile_connections(self.sessions, self._adapter, connection_id=selected_id)
+                except (CalDAVError, CredentialStoreError, ValueError):
+                    logger.warning('Inbound reconciliation unavailable; retry on the next queue pass')
 
     async def _drain(self, connection_id: str) -> None:
         async with self.sessions() as session:

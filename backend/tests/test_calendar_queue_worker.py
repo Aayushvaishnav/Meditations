@@ -102,7 +102,7 @@ async def test_uncertain_create_then_local_delete_reconciles_before_deleting(env
 async def test_connection_gates_preserve_pending_work(env, changes):
     await change(env, CalendarConnection, env.connection.id, **changes)
     await QueueWorker(env.sessions, env.manager).run_once()
-    assert env.adapter.calls == []
+    assert writes(env) == []  # inbound reconciliation may read; outbound gates block writes
     assert (await saved(env)).acknowledged_revision == 0
 
 
@@ -110,7 +110,7 @@ async def test_connection_gates_preserve_pending_work(env, changes):
 async def test_link_gates_never_write(env, state):
     await change(env, CalendarLink, env.link.id, state=state)
     await QueueWorker(env.sessions, env.manager).run_once()
-    assert env.adapter.calls == []
+    assert writes(env) == []
     assert (await saved(env)).state == state
 
 
@@ -251,7 +251,7 @@ async def test_never_attempted_create_deleted_offline_requires_no_remote_cleanup
     assert result.state == 'detached'
     assert result.acknowledged_revision == result.local_revision
     assert await saved(env, CalendarDispatch) is None
-    assert env.adapter.calls == []
+    assert writes(env) == []
 
 
 async def test_source_edit_between_acknowledgment_reads_remains_pending(env, monkeypatch):

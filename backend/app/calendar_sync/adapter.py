@@ -30,6 +30,10 @@ class NotFoundError(CalDAVError):
     pass
 
 
+class SyncTokenInvalid(CalDAVError):
+    """The stored token expired server-side; rebuild the cache from a complete listing."""
+
+
 @dataclass(frozen=True)
 class Calendar:
     url: str
@@ -58,6 +62,51 @@ def _status(text: str | None) -> int:
     return int(match[1])
 
 
+@dataclass(frozen=True)
+class SyncChange:
+    url: str
+    etag: str | None  # None marks a deletion
+
+
+@dataclass(frozen=True)
+class SyncResult:
+    token: str | None  # None when the server supports no sync-token continuation
+    changes: tuple[SyncChange, ...]
+
+
+def _prop_values(root: ET.Element, path: str) -> list[ET.Element]:
+    return [element for element in root.iter() if element.tag == path]
+
+
+def _report_multistatus(self: "CalDAVAdapter", content: bytes, collection_url: str) -> tuple[ET.Element, list[str]]:
+    """Parse a DAV multistatus root that may carry a sync-token child."""
+    if b"\x00" in content or re.search(br"<!\s*(?:DOCTYPE|ENTITY)\b", content, re.I):
+        raise ProtocolError("DTD and entity declarations are forbidden")
+    try:
+        tree = ET.fromstring(content)
+    except ET.ParseError as exc:
+        raise ProtocolError("Malformed DAV XML") from exc
+    if tree.tag != f"{{{DAV}}}multistatus":
+        raise ProtocolError("Expected DAV multistatus root")
+    if any(element.tag in {f"{{{DAV}}}error", f"{{{DAV}}}number-of-matches-within-limits"}
+           for element in tree.iter()):
+        raise ProtocolError("DAV response contains an error or partial-result indicator")
+    tokens = []
+    for child in tree:
+        if child.tag == f"{{{DAV}}}sync-token":
+            if child.text is None or not child.text.strip():
+                raise ProtocolError("Empty DAV sync token")
+            tokens.append(child.text.strip())
+            continue
+        if child.tag == f"{{{DAV}}}responsedescription":
+            continue
+        if child.tag != f"{{{DAV}}}response":
+            raise ProtocolError("Unexpected DAV multistatus child")
+    if len(tokens) > 1:
+        raise ProtocolError("Duplicate DAV sync token")
+    return tree, tokens
+
+
 class CalDAVAdapter:
     def __init__(self, base_url: str, client: httpx.AsyncClient):
         self.client = client
@@ -81,11 +130,15 @@ class CalDAVAdapter:
         except httpx.TransportError as exc:
             raise CalDAVError("CalDAV transport failure; write outcome may be uncertain") from exc
         if response.status_code in (401, 403):
+            if response.status_code == 403 and b"valid-sync-token" in response.content:
+                raise SyncTokenInvalid("The server no longer accepts the stored sync token")
             raise AuthenticationError("CalDAV authentication or permission denied")
         if response.status_code == 404:
             raise NotFoundError("CalDAV resource not found")
         if response.status_code == 412:
             raise ConflictError("CalDAV precondition failed")
+        if response.status_code in (400, 405, 415, 422):
+            raise ProtocolError(f"Unexpected CalDAV status {response.status_code}")
         return response
 
     async def _properties(self, url: str, depth: int, names: list[tuple[str, str]]):
@@ -211,6 +264,67 @@ class CalDAVAdapter:
             etag = props.get(f"{{{DAV}}}getetag")
             resources.append(RemoteResource(url, _strong_etag(etag.text if etag is not None else None)))
         return resources
+
+    async def supports_sync_collection(self, calendar_url: str) -> bool:
+        rows = await self._properties(calendar_url, 0, [(DAV, "supported-report-set")])
+        reports = rows[0][1].get(f"{{{DAV}}}supported-report-set") if rows else None
+        if reports is None:
+            raise ProtocolError("Missing supported-report-set property")
+        for report in reports.findall(f"{{{DAV}}}supported-report"):
+            grammar = report.find(f"{{{DAV}}}report")
+            if grammar is not None and any(child.tag == f"{{{DAV}}}sync-collection" for child in grammar):
+                return True
+        return False
+
+    async def sync_collection(self, calendar_url: str, token: str | None = None) -> SyncResult:
+        """RFC 6578 incremental collection report; token=None requests the initial set."""
+        url = self._url(calendar_url)
+        root = ET.Element(f"{{{DAV}}}sync-collection")
+        sync = ET.SubElement(root, f"{{{DAV}}}sync-token")
+        if token is not None:
+            if not token or any(ord(char) <= 32 for char in token):
+                raise ProtocolError("Sync tokens cannot be empty or contain whitespace")
+            sync.text = token
+        prop = ET.SubElement(root, f"{{{DAV}}}prop")
+        ET.SubElement(prop, f"{{{DAV}}}getetag")
+        response = await self._request("REPORT", url, content=ET.tostring(root), headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"})
+        if response.status_code != 207:
+            raise ProtocolError(f"Expected DAV multistatus, received {response.status_code}")
+        tree, tokens = _report_multistatus(self, response.content, url)
+        if token is not None and not tokens:
+            raise ProtocolError("Incremental sync-collection responses require a new sync token")
+        collection = urlsplit(url)
+        parent_path = unquote(collection.path).rstrip("/") + "/"
+        changes = []
+        for item in tree:
+            if item.tag != f"{{{DAV}}}response":
+                continue
+            if any(child.tag not in {f"{{{DAV}}}{name}" for name in ("href", "propstat", "status", "responsedescription")}
+                   for child in item):
+                raise ProtocolError("Unexpected DAV response child")
+            hrefs = item.findall(f"{{{DAV}}}href")
+            if len(hrefs) != 1 or not hrefs[0].text:
+                raise ProtocolError("DAV response requires one href")
+            resource_url = self._url(hrefs[0].text, url)
+            if item.find(f"{{{DAV}}}status") is not None:
+                # A member-level 404 status marks a reported deletion
+                code = _status(item.findtext(f"{{{DAV}}}status"))
+                if code != 404:
+                    raise ProtocolError(f"Unexpected DAV resource status {code}")
+                changes.append(SyncChange(resource_url, None))
+                continue
+            propstats = item.findall(f"{{{DAV}}}propstat")
+            if len(propstats) != 1:
+                raise ProtocolError("Sync-collection responses require exactly one propstat")
+            code = _status(propstats[0].findtext(f"{{{DAV}}}status"))
+            values = propstats[0].find(f"{{{DAV}}}prop")
+            if code != 200 or values is None:
+                raise ProtocolError(f"Unexpected DAV property status {code}")
+            etags = [value for value in values if value.tag == f"{{{DAV}}}getetag"]
+            if len(etags) != 1 or etags[0].text is None:
+                raise ProtocolError("Sync-collection changes require one ETag")
+            changes.append(SyncChange(resource_url, _strong_etag(etags[0].text)))
+        return SyncResult(tokens[0] if tokens else None, tuple(changes))
 
     async def get_resource(self, url: str) -> RemoteResource:
         response = await self._request("GET", url)

@@ -34,6 +34,7 @@ vi.mock("@/components/skeletons", () => ({ KanbanSkeleton: () => null, TaskListS
 vi.mock("@/hooks/api", () => ({
   useTasks: () => ({ data: [], isLoading: false, isError: false }),
   useLists: () => ({ data: [] }),
+  useResumeCalendarReconciliation: () => {},
 }))
 vi.mock("@/components/journal-editor", async () => {
   lazyModules.journal.requested()

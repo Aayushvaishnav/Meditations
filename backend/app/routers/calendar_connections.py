@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Literal, TypeVar
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from sqlmodel import select
 
@@ -15,6 +15,7 @@ from app.calendar_sync.credentials import Credentials
 from app.calendar_sync.controls import CalendarControls
 from app.calendar_sync.dependencies import get_connection_manager
 from app.calendar_sync.validation import CredentialRoute
+from app.calendar_sync.inbound_overlay import InboundOverlay, inbound_overlay
 from app.models import CalendarConnection, CalendarLink
 from app.routers.deps import SessionDep
 
@@ -49,6 +50,14 @@ class ConnectionDraft(BaseModel):
 @router.get("", response_model=list[CalendarConnection])
 async def list_connections(session: SessionDep):
     return (await session.exec(select(CalendarConnection).order_by(CalendarConnection.id))).all()
+
+
+@router.post("/resume", status_code=204)
+async def resume_reconciliation(request: Request):
+    """App-resume signal: run one reconciliation pass over verified, enabled connections."""
+    worker = request.app.state.calendar_queue_worker
+    await worker.run_once()
+    return Response(status_code=204)
 
 
 @router.post("", response_model=CalendarConnection, status_code=201)
@@ -179,3 +188,10 @@ async def opt_out_block(connection_id: str, block_id: str, controls: ControlsDep
 @router.post('/{connection_id}/links/{link_id}/detach', response_model=CalendarLink)
 async def detach_link(connection_id: str, link_id: str, controls: ControlsDep):
     return await _result(controls.detach(connection_id, link_id))
+
+
+@router.get('/{connection_id}/inbound/overlay', response_model=InboundOverlay)
+async def connection_inbound_overlay(connection_id: str, session: SessionDep):
+    if await session.get(CalendarConnection, connection_id) is None:
+        raise HTTPException(status_code=404, detail="Calendar connection not found")
+    return await inbound_overlay(session, connection_id)

@@ -98,6 +98,12 @@ Timed blocks preserve their instants; receiving clients display them in their ch
 
 Local saves are immediate; remote success requires server acknowledgment. A completed **Sync now** request can still leave conflicts or errors to resolve.
 
+## Mirror remote events (read-only)
+
+While a connection is verified and sync is enabled, Journal mirrors the remote calendar's events into a read-only cache. Mirrored appointments appear in the calendar view under the **Live calendar** selector as distinct chips labelled "Mirrored". They never create or modify tasks, deadlines, work blocks, focus, or scores — the server stays authoritative for its own events.
+
+Mirroring updates automatically: at startup, every 30 seconds while running, on **Sync now**, and when the app window regains focus. Servers supporting WebDAV sync tokens (Radicale 3.9 does) are reconciled incrementally; other servers use complete listings. If a stored token expires, the cache rebuilds automatically. Events that cannot be displayed (recurring series, cancelled, or unparsable) are counted instead of shown; multi-event resources are kept as unparsable cache entries. Disconnecting or pausing stops mirroring; the last cached view stays until reconnect. Editing remote events happens in your other calendar client — Journal never writes back to mirrored events.
+
 ## Pause, remove, or disconnect
 
 | Control | Result |

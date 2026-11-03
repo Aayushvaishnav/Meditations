@@ -45,6 +45,14 @@ class FakeAdapter:
         self.before_write = None
         self.reject_write = False
 
+    async def list_resources(self, calendar_url):
+        self.calls.append(('list', calendar_url))
+        return [RemoteResource(url, resource.etag) for url, resource in self.resources.items()]
+
+    async def supports_sync_collection(self, calendar_url):
+        self.calls.append(('supports_sync', calendar_url))
+        return False
+
     async def get_resource(self, url):
         self.calls.append(('get', url))
         if url not in self.resources:

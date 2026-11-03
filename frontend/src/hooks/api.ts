@@ -1,4 +1,5 @@
 import type { ImportedOverlay } from "@/api/calendar-overlay-types"
+import type { InboundOverlay } from "@/api/calendar-inbound-types"
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -815,3 +816,46 @@ export function useImportedCalendarOverlay(selection: OverlaySelection) {
 }
 
 export { webhooksKey, useWebhooks, useWebhookDeliveries, useWebhookAction } from "./webhooks"
+
+// Inbound live events come from reconciled CalDAV caches; separate from imports and tasks
+export const calendarInboundKey = ["calendar-inbound"] as const
+
+export function useInboundOverlay(connectionId: string | null) {
+  return useQuery({
+    queryKey: [...calendarInboundKey, "overlay", connectionId],
+    enabled: connectionId !== null,
+    queryFn: () => {
+      if (connectionId === null) throw new Error("Choose a connected calendar first")
+      return api.get<InboundOverlay>(`/calendar/connections/${encodeURIComponent(connectionId)}/inbound/overlay`)
+    },
+  })
+}
+
+export function useCalendarResume() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationKey: [...calendarInboundKey, "resume"] as const,
+    mutationFn: () => api.post<void>("/calendar/connections/resume", {}),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: calendarInboundKey })
+      void qc.invalidateQueries({ queryKey: calendarKey })
+    },
+  })
+}
+
+/** App-resume signal: one reconciliation pass on window focus or return to visibility. */
+export function useResumeCalendarReconciliation() {
+  const resume = useCalendarResume()
+  useEffect(() => {
+    if (document.visibilityState !== "visible") return
+    const signal = () => {
+      if (document.visibilityState === "visible") resume.mutate()
+    }
+    window.addEventListener("focus", signal)
+    document.addEventListener("visibilitychange", signal)
+    return () => {
+      window.removeEventListener("focus", signal)
+      document.removeEventListener("visibilitychange", signal)
+    }
+  }, [resume])
+}
