@@ -33,6 +33,7 @@ optional AI against any OpenAI-compatible endpoint (defaults to a local Ollama).
 - **Daily score** — deterministic and never LLM-computed:
   `0.40*task + 0.35*focus + 0.15*habit + clamp(llm_nudge, ±10)`; unconfigured
   components are neutral, never punitive.
+- **Optional outgoing webhooks**: Send selected time-block changes and task completions to a trusted workflow endpoint. Event/list scopes, optional title sharing, signed requests, durable retries, and delivery status live in Settings. This is independent of calendar sync; see the [workflow guide and local example](docs/webhooks.md).
 - **Desktop shell** — Tauri v2 with system tray (show/quit) and a
   `Super+Shift+A` global shortcut that focuses the app from anywhere.
 
@@ -158,7 +159,31 @@ file while the app is running.
 **Treat backups as sensitive.** They are unencrypted and include private journal
 content and API keys saved in Settings. Environment files and the downloaded
 embedding model are separate from the database and are excluded. Keep backups in
-a private location, with encryption when appropriate.
+a private location, with encryption when appropriate. CalDAV credentials use the
+OS credential store instead of SQLite and are excluded from backups. Enter them
+again when moving the database to another path or machine; verify calendar
+connections explicitly after restart or restore. Optional calendar setup and per-block synchronization controls are available in
+**Settings → Calendar synchronization**; see the
+[calendar synchronization guide](docs/calendar-sync.md).
+
+For local `.ics` files, use **Settings → Import calendar files**. Imports retain
+external appointments and recurring series in a read-only inventory, separate
+from tasks, work blocks and scores. Reimport into the same destination to update
+matching event identities; omitted records remain. In Calendar, choose an
+**Imported calendar** to show standalone appointments as a read-only overlay.
+Recurring occurrence expansion and reminders remain deferred. See the
+[calendar import guide](docs/calendar-import.md).
+
+For a connected CalDAV calendar, select **Live calendar** in Calendar to show
+read-only mirrored appointments. Verify and enable the connection in Settings
+first. Last-check and stale-cache messages distinguish mirrored snapshots from
+current server availability; remote events never rewrite local tasks. See
+[mirroring remote events](docs/calendar-sync.md#mirror-remote-events-read-only).
+
+Automatic ICS URL subscriptions and Journal-hosted feeds are unavailable. The
+[subscription evaluation](docs/calendar-subscriptions.md) distinguishes future
+external URL polling from publishing a reachable, access-controlled Journal feed.
+Both would be one-way, with refresh timing controlled by the consuming client.
 
 Default database locations:
 
@@ -360,7 +385,11 @@ and manual build. The Linux bundle job waits for all of them to pass. It builds
 the backend with Python 3.12 and the lockfile's `packaging` dependency group,
 then launches that frozen executable through `backend/scripts/smoke_sidecar.py`.
 A startup, health, or local CRUD failure stops the job before Tauri builds or
-any draft-release creation or asset upload. Manual runs validate and build
+any draft-release creation or asset upload. The job also requires isolated
+Radicale interoperability tests and authenticated discovery through that same
+frozen executable; native vault access and the full desktop sync flow are not
+covered. See [developer verification](docs/calendar-sync.md#developer-verification)
+for the optional local-server suite. Manual runs validate and build
 artifacts without creating a release.
 
 To test an existing sidecar locally:

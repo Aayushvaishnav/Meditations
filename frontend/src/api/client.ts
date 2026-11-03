@@ -41,8 +41,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  download: async (path: string): Promise<Blob> => {
-    const res = await requestResponse(path, { method: "POST" })
+  download: async (path: string, body?: unknown): Promise<Blob> => {
+    const res = await requestResponse(path, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     return res.blob()
   },
   get: <T>(path: string) => request<T>(path),

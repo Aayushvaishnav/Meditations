@@ -74,6 +74,11 @@ jobs:
         working-directory: backend
         run: uv run --locked --no-sync python scripts/smoke_sidecar.py ../frontend/src-tauri/binaries/meditations-backend/meditations-backend
 
+      - name: Test packaged CalDAV interoperability
+        working-directory: backend
+        run: |
+          JOURNAL_TEST_SIDECAR="$(realpath ../frontend/src-tauri/binaries/meditations-backend/meditations-backend)" uv run --locked --group calendar-test pytest integration/test_radicale.py
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend

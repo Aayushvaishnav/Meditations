@@ -67,7 +67,7 @@ async def test_v7_preserves_bytes_and_rolls_back_then_retries(engine, monkeypatc
     monkeypatch.setattr(migrations, "MIGRATIONS", real)
     await migrations.migrate(engine)
     version, rows, _ = await snapshot(engine)
-    assert version == 7
+    assert version == migrations.LATEST_VERSION
     row = rows[0]
     assert (row[0], row[1], row[4], row[5], row[8], row[9]) == tuple(before[1][0])
     assert (row[2], row[3], row[6], row[7]) == ("timed", "UTC", None, None)

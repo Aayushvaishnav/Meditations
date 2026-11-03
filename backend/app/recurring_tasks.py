@@ -1,4 +1,4 @@
-"""Completion-triggered task recurrence; calendar arithmetic lives in recurrence.py."""
+"""Completion-triggered task recurrence; task-rule arithmetic lives in recurrence.py."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.models import Task
-from app.recurrence import next_occurrence
+from app.recurrence import TaskRecurrenceError, next_occurrence, validate_task_rule
 from app.util import utc_now
 
 
@@ -19,8 +19,9 @@ def ensure_recurrence_identity(task: Task) -> None:
 
 
 async def spawn_successor(session: AsyncSession, task: Task) -> None:
-    if not task.recurrence_rule:
+    if task.recurrence_rule is None:
         return
+    validate_task_rule(task.recurrence_rule)
     ensure_recurrence_identity(task)
     if task.recurrence_occurrence is None:
         raise ValueError("Recurring task is missing its occurrence identity")
@@ -32,7 +33,7 @@ async def spawn_successor(session: AsyncSession, task: Task) -> None:
     )
     next_due = next_occurrence(task.recurrence_rule, anchor)
     if next_due is None:
-        return
+        raise TaskRecurrenceError("Next task occurrence is outside the supported date range")
 
     successor = Task(
         list_id=task.list_id,

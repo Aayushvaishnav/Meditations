@@ -7,6 +7,7 @@ export type FileDownloadResult =
 
 interface FileDownloadOptions {
   endpoint: string
+  body?: unknown
   filename: string
   title: string
   fileType: { name: string; extensions: string[] }
@@ -14,6 +15,9 @@ interface FileDownloadOptions {
 }
 
 export async function createFileDownload(options: FileDownloadOptions): Promise<FileDownloadResult> {
+  const fetchFile = () => options.body === undefined
+    ? api.download(options.endpoint)
+    : api.download(options.endpoint, options.body)
   if ("__TAURI_INTERNALS__" in window) {
     const { save } = await import("@tauri-apps/plugin-dialog")
     const path = await save({
@@ -22,7 +26,7 @@ export async function createFileDownload(options: FileDownloadOptions): Promise<
       filters: [options.fileType],
     })
     if (path === null) return { kind: "cancelled" }
-    const blob = await api.download(options.endpoint)
+    const blob = await fetchFile()
     const { writeFile } = await import("@tauri-apps/plugin-fs")
     try {
       // Exclusive creation preserves existing files, including the live database;
@@ -32,7 +36,7 @@ export async function createFileDownload(options: FileDownloadOptions): Promise<
     }
     return { kind: "saved" }
   }
-  return { kind: "download", blob: await api.download(options.endpoint), filename: options.filename }
+  return { kind: "download", blob: await fetchFile(), filename: options.filename }
 }
 
 export function startBrowserDownload(blob: Blob, filename: string): () => void {

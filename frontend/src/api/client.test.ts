@@ -26,6 +26,22 @@ describe("file downloads", () => {
     expect(readJson).not.toHaveBeenCalled()
   })
 
+  it("posts selected IDs as JSON while reading the calendar response as binary", async () => {
+    const blob = new Blob(["BEGIN:VCALENDAR\r\nEND:VCALENDAR"], { type: "text/calendar" })
+    const readBlob = vi.fn().mockResolvedValue(blob)
+    const readJson = vi.fn()
+    fetchMock.mockResolvedValue({ ok: true, blob: readBlob, json: readJson } as unknown as Response)
+    vi.stubGlobal("fetch", fetchMock)
+    const body = { block_ids: ["block-one", "block-two"] }
+
+    await expect(api.download("/calendar/export", body)).resolves.toBe(blob)
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/calendar\/export$/), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    })
+    expect(readBlob).toHaveBeenCalledOnce()
+    expect(readJson).not.toHaveBeenCalled()
+  })
+
   it("surfaces server errors instead of downloading an error document", async () => {
     const readBlob = vi.fn()
     fetchMock.mockResolvedValue({

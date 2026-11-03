@@ -179,10 +179,12 @@ def test_identity_is_server_managed(client):
     assert identity(edited) == identity(original)
 
 
-def test_unsupported_recurrence_does_not_spawn(client):
-    original = create_recurring(client, recurrence_rule="RRULE:FREQ=MONTHLY")
-    patch(client, original, status="completed")
-    assert len(client.get("/api/tasks").json()) == 1
+def test_unsupported_recurrence_is_rejected(client):
+    response = client.post("/api/tasks", json={
+        "title": "Unsupported", "recurrence_rule": "RRULE:FREQ=MONTHLY",
+    })
+    assert response.status_code == 422
+    assert client.get("/api/tasks").json() == []
 
 
 def test_successor_failure_rolls_back_source_completion(client):

@@ -17,6 +17,9 @@ import {
 import { Button } from "@/components/ui/button"
 import { BackupSettings } from "@/components/backup-settings"
 import { ExportSettings } from "@/components/export-settings"
+import { WebhookSettings } from "@/components/webhook-settings"
+import { CalendarSettings } from "@/components/calendar-settings"
+import { CalendarImportSettings } from "@/components/calendar-import-settings"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
@@ -408,6 +411,9 @@ export function SettingsView() {
         </div>
         <BackupSettings />
         <ExportSettings />
+        <CalendarImportSettings />
+        <CalendarSettings />
+        <WebhookSettings />
         <PromptsCard />
         <div className="grid gap-4 md:grid-cols-2">
           <AppearanceCard />

@@ -7,6 +7,7 @@ from sqlalchemy import text, or_
 from sqlmodel import func, select
 
 from app.models import Task, TaskList
+from app.recurrence import TaskRecurrenceError
 from app.recurring_tasks import ensure_recurrence_identity, spawn_successor
 from app.routers.deps import SessionDep
 from app.schemas import TaskCreate, TaskReorder, TaskStatus, TaskUpdate, TaskResponse
@@ -146,7 +147,10 @@ async def update_task(task_id: str, payload: TaskUpdate, session: SessionDep):
 
     ensure_recurrence_identity(task)
     if completing:
-        await spawn_successor(session, task)
+        try:
+            await spawn_successor(session, task)
+        except TaskRecurrenceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     await session.commit()
     await session.refresh(task)
