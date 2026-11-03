@@ -51,6 +51,20 @@ export interface TaskInput {
   tags?: string[]
 }
 
+export type TimeBlockInput =
+  | { kind: "timed"; task_id: string; start_at: string; end_at: string; timezone?: string }
+  | { kind: "all_day"; task_id: string; start_date: string; end_date: string } // exclusive end
+
+export type TimeBlock = {
+  id: string
+  task_id: string
+  created_at: string
+  updated_at: string
+} & (
+  | { kind: "timed"; start_at: string; end_at: string; timezone: string; start_date: null; end_date: null }
+  | { kind: "all_day"; start_at: null; end_at: null; timezone: null; start_date: string; end_date: string }
+)
+
 export interface FocusSummary {
   date: string
   total_minutes: number
@@ -248,3 +262,44 @@ export const LIST_COLORS = [
   "#ec4899",
   "#64748b",
 ]
+
+export interface CalendarConnection {
+  id: string
+  server_url: string
+  calendar_url: string
+  state: "disconnected" | "connected" | "authentication_required"
+  enabled: boolean
+  credential_state: "absent" | "present" | "removal_pending"
+}
+export interface DiscoveredCalendar {
+  url: string
+  display_name: string
+  writable: boolean
+  supports_vevent: boolean
+}
+export interface CalendarAuthentication {
+  username: string
+  password: string
+  auth_type: "basic" | "digest"
+}
+export interface CalendarLinkView {
+  id: string
+  connection_id: string
+  selection_state: "opted_in" | "opted_out" | "detached"
+  local_block_id: string
+  state: "pending" | "syncing" | "synced" | "conflict" | "error" | "detached"
+  desired_action: "upsert" | "delete"
+  acknowledged_action: "unknown" | "upsert" | "delete"
+  local_revision: number
+  acknowledged_revision: number
+  last_error: string | null
+}
+export interface CalendarSyncStatus {
+  connection: CalendarConnection
+  last_success_state: "observed" | "unknown" | "never"
+  queued_count: number
+  conflict_count: number
+  error_count: number
+  detached_count: number
+  last_success_at: string | null
+}

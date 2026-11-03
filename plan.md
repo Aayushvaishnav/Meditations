@@ -217,7 +217,11 @@ recurrence identity; v3 adds `search_vector_state` (`doc_id` primary key and
 v5 adds indexed `tasks.deadline_date` and an exclusive deadline-storage constraint;
 v6 adds task-owned timed `time_blocks` with an interval CHECK and cascading task FK;
 v7 rebuilds blocks with exclusive timed/all-day shapes and IANA timezone metadata.
-Fresh installations run all seven migrations.
+v8 adds calendar connections/links; v9 adds credential bookkeeping; v10 adds
+immutable calendar dispatches and acknowledgment actions; v11 adds transactional
+calendar source-capture triggers; v12 adds sync acknowledgment times and explicit
+link selection state; v13 adds independent import sources, original upload snapshots,
+and opaque event identities. Fresh installations run all thirteen migrations.
 Existing unversioned installations adopt the baseline and then upgrade. An explicit SQLite
 `BEGIN IMMEDIATE` serializes startup writers; pending schema changes, backfills,
 and version updates commit together. A failed upgrade rolls back the pending
@@ -343,6 +347,33 @@ CREATE TABLE monthly_summaries (
 
 ## 6. Detailed Feature Specifications
 
+### 6.0 Frontend section loading (PERF-01)
+
+`App.tsx` keeps the task views and shared shell eager. Journal, Insights,
+Second Brain, and Settings use module-scoped React lazy imports; TipTap and
+its editor dependencies load only when Journal is selected. Shared UI and API
+modules remain available to both the initial bundle and deferred sections.
+No manual vendor-chunk rules or additional dependencies are required.
+
+A Suspense boundary keyed by section owns only the central content. Its
+fallback has a busy main landmark and a section-specific loading status;
+the sidebar, focus timer, and command palette remain mounted and usable.
+Leaving Journal still unmounts it immediately and flushes its frozen pending
+save, including when the destination module has not loaded. A late module
+resolution cannot change the selected section. Cached modules do not reload
+on revisits; section component state retains its existing unmount semantics.
+Persisted initial section selection uses the same loading path.
+
+Measured production initial JavaScript fell from 1,399,489 to 817,780 bytes
+minified (41.6%), including the entry's transitive static imports rather than
+only its main file. Deferred section chunks are approximately 549 KB for
+Journal, 9.9 KB for Insights, 7.9 KB for Second Brain, and 17.1 KB for Settings,
+plus shared dependencies as needed. Generate the build graph with
+`npm run build -- --manifest`; inspect `dist/.vite/manifest.json` and include
+all recursive `imports` when comparing initial bytes. These are build
+measurements, not network latency guarantees. The entry and Journal chunks
+still exceed Vite's 500 KB advisory threshold; it is not suppressed.
+
 ### 6.1 Feature Module 1: The TickTick-Grade Task Engine
 1. **Quick-Add Parsing Bar**:
    - Parses date, time, recurring patterns, tags, priority, and target list simultaneously.
@@ -357,7 +388,7 @@ CREATE TABLE monthly_summaries (
 2. **Multi-View Modes**:
    - **List View**: Grouped by Today, Upcoming, Overdue, or custom tag/list.
    - **Kanban Board**: Drag-and-drop between lists or statuses (`To Do`, `In Progress`, `Done`).
-   - **Interactive Calendar**: Six-week month grid of task deadlines; drag between days to reschedule. Task-linked work blocks have a separate backend API; their calendar UI remains UX-03.
+   - **Interactive Calendar**: Six-week month grid of task deadlines; drag between days to reschedule. Task-linked work blocks render independently with timed ranges or all-day labels; drag or the day dialog reschedules blocks without changing deadlines.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
@@ -370,8 +401,9 @@ local dates; Upcoming includes tomorrow and later; All and list scopes contain
 unfinished tasks, including undated ones. Completed scope contains completed
 tasks. Canceled tasks are excluded. Nested list children follow the same filters;
 a matching child whose parent is excluded can appear at the top level. The
-calendar renders only tasks with valid due instants, including dated subtasks,
-and limits each day cell to four chips with the remainder available in its dialog.
+calendar renders valid date-only/timed deadlines, including dated subtasks, plus
+work blocks belonging to the selected tasks even without deadlines. Each day cell
+shows up to four deadlines and three blocks, with the rest available in its dialog.
 Calendar creation uses the currently selected list, or no list for smart scopes.
 
 Task deadlines have explicit none, date-only, or timed states (SCHED-01 below).
@@ -382,9 +414,32 @@ Moving a dated task changes its deadline, preserves its kind, and preserves loca
 hours, minutes, seconds, and milliseconds for timed deadlines. Native Date setters
 advance nonexistent DST times by the gap and choose the earlier offset for overlaps.
 Calendar copy identifies deadline changes instead of implying work attendance.
-The calendar still displays deadlines; work-block interaction remains UX-03.
-All-day work blocks and IANA metadata are available through the backend API;
-their calendar UI remains UX-03.
+Work blocks use separate shaded chips with timed ranges or All day labels; they
+appear on every overlapping browser-local day (timed) or date label (all-day),
+respecting exclusive ends. All blocks follow the owner's smart/list scope and
+search, including terminal-state visibility. Drag identity includes both block ID
+and rendered day; dragging a continuation shifts the complete interval by the
+source/target calendar-day delta. Day dialogs expose all blocks plus a date-input
+Move block action for keyboard and single-pointer use.
+
+Block moves preserve displayed browser-local start time, fractional elapsed
+duration, task association, and saved IANA metadata. Nonexistent local target
+times are rejected instead of silently shifted; repeated times use the earlier
+occurrence through native Date resolution. This single-block interaction policy
+is distinct from future saved-zone recurring-series expansion below. All-day
+moves preserve date-span length and exclusive ends without creating UTC instants.
+Only the selected block is replaced; deadlines, status, recurrence successors,
+recorded focus, and scores remain unchanged. Block creation/deletion and direct
+time/zone editing remain API-only.
+
+`["time-blocks"]` is an independent query cache. Full-replacement PUTs wait for
+server confirmation, disable block movement through settlement/refetch, and
+invalidate only blocks. A shared mutation key keeps pending protection across
+calendar remounts. Confirmed PUT responses replace existing cached blocks before
+refetch, so a failed refresh does not discard the confirmed move or resurrect a
+removed block. Failed moves retain the current cache and show an error;
+query loading/error/retry is visible without hiding deadlines. Task/list deletion
+invalidates blocks to reflect backend cascades.
 
 Task overdue indicators in list, board, and calendar views subscribe through
 `hooks/use-deadline-passed.ts`. Timed deadlines become overdue strictly after their
@@ -495,10 +550,13 @@ through that zone instead of adding a fixed UTC duration: 09:00 stays 09:00 acro
 DST. Gaps need an explicit reschedule and ambiguous occurrences need a matching
 offset; the service must not silently shift or choose. All-day recurrence operates
 on calendar labels. This is the boundary contract only: no block RRULE, automatic
-expansion, series, or exception storage is introduced here (SCHED-04 owns them).
+expansion, series, or exception storage is introduced here. SCHED-04 defines
+the ownership boundary below; ICS-02 retains external series opaquely, while
+expanded occurrence storage remains deferred.
 Existing completion-triggered task recurrence keeps its UTC/date semantics.
-Work-block calendar UI remains UX-03; ICS and provider integration remain later
-work. No attendance or block-completion state is inferred.
+Work-block calendar rendering/rescheduling is implemented under UX-03. ICS file
+export/import and outbound CalDAV are described below; none implies attendance
+or block completion.
 
 #### Task deadlines and scheduled work (SCHED-01)
 
@@ -597,8 +655,17 @@ Neither changes telemetry. Saved review scores remain snapshots until rerun.
 
 `backend/app/recurring_tasks.py` owns task-series identity and successor creation;
 `recurrence.py` owns RRULE date arithmetic. This is separate from future calendar
-provider recurrence. The supported subset remains DAILY/WEEKLY with INTERVAL
-and optional weekly BYDAY.
+provider recurrence (SCHED-04). New explicit rule writes accept only `FREQ=DAILY`
+or `FREQ=WEEKLY`, positive integer `INTERVAL`, and unnumbered `BYDAY` only for
+weekly rules. `INTERVAL` is bounded by RFC 5545's signed 32-bit integer range;
+a successor outside the supported calendar range returns 422 without completing
+the task. Parsing tolerates case, whitespace, and an optional `RRULE:` prefix;
+it never silently clamps intervals or filters fields. Unknown, duplicate, malformed,
+or unsupported fields return 422. Existing invalid stored rules remain readable
+and portable-exportable unchanged; unrelated edits remain allowed, but completion
+requires clearing or replacing the rule (otherwise 422). No migration is needed.
+Weekly intervals use Monday-based weeks; existing UTC/date task semantics remain
+unchanged.
 
 - Recurring tasks receive a server-managed `recurrence_series_id` equal to the
   root task ID and `recurrence_occurrence = 0`. Clones share the series ID and
@@ -628,6 +695,208 @@ and optional weekly BYDAY.
   dates. Reopening legacy history can therefore regenerate an occurrence even
   if an unrelated legacy row happens to match it. The upgrade cannot repair
   previously suppressed or duplicated occurrences automatically.
+
+#### Task/calendar recurrence boundary (SCHED-04)
+
+Completion-triggered task recurrence belongs to `recurring_tasks.py` and
+`recurrence.py`; calendar `VEVENT` recurrence is a separate domain.
+Local work blocks are currently nonrecurring and reject calendar recurrence
+inputs. This boundary introduces no series schema, recurrence expansion, or provider
+integration. ICS-01 implements individual-block snapshot export below. ICS-02
+now stores imported series opaquely; expansion and calendar display remain
+deferred. SCHED-04 itself introduced no migration.
+
+- Snapshot export maps each individual block's stable local ID to a stable
+  `VEVENT` UID. A task RRULE must never become a `VEVENT` RRULE; event attendance
+  or status changes must never trigger task successor clones.
+- External import identity is collection/source + UID + original typed
+  `RECURRENCE-ID` (DATE, local date-time with TZID, or UTC date-time); the series
+  master uses an explicit master marker instead of an occurrence ID. A moved
+  occurrence retains its original recurrence identity, not its new start time.
+  Never match by title or date. Floating date-times and `RANGE=THISANDFUTURE`
+  require dedicated support; until then retain the whole resource as opaque and
+  read-only or reject it atomically instead of dropping those semantics.
+- Future series handling must preserve overrides, cancellation tombstones, and
+  `EXDATE`/`RDATE` values. Unsupported raw provider rules must remain opaque and
+  read-only or be rejected atomically; never convert them to task rules or
+  partially expand them.
+- Future calendar wall-clock recurrence follows SCHED-03's zone and explicit
+  gap/fold resolution contract above; task UTC/date arithmetic is unchanged.
+
+#### Selected-block iCalendar snapshots (ICS-01)
+
+`app/calendar_export.py` serializes RFC 5545 calendars independently of task
+recurrence and future CalDAV adapters. `POST /api/calendar/export` accepts exactly
+`{"block_ids":["block-id", "another-id"]}` with a nonempty list of nonempty strict
+strings. Selection is explicit per download; no export flags or migration are
+introduced. One joined SELECT reads blocks and task titles/status from the same
+SQLite statement snapshot. Duplicates collapse, IDs sort lexicographically, and
+any missing ID returns 404 instead of a partial file. Invalid requests return 422.
+
+- Each selected block becomes one independent `VEVENT`, with stable UID
+  `meditations-time-block-{uuid5(NAMESPACE_URL, "journal:time-block:" + id)}@journal.local`.
+  Moving a block, changing its kind or owner, and renaming/completing its task
+  preserve that UID. Backups/restores preserve IDs; independent databases use
+  independently generated IDs. No title/date matching or remote identity exists.
+- Timed starts/ends export as UTC `Z` values. `X-JOURNAL-TIMEZONE` preserves the
+  saved IANA metadata for inspection, instead of relying on receiving clients to
+  understand custom fields. No floating time, TZID, VTIMEZONE, or calendar RRULE
+  is needed for individual UTC instants. Clients display them in their own zone.
+- All-day starts/ends use `VALUE=DATE`, retaining the exclusive end label without
+  creating UTC instants. Fractional timed seconds truncate to whole seconds;
+  an interval that collapses at that precision rejects the whole export with 422.
+- SUMMARY contains the task title only. Canceled owners map to `CANCELLED`, all
+  others (including completed tasks) to `CONFIRMED`; attendance and task status
+  remain independent. No descriptions, deadlines, task RRULEs, journals, tags,
+  credentials, focus history, or automatic task successors enter the file.
+- DTSTAMP is export time; CREATED is block creation; LAST-MODIFIED is the later
+  block/task update. TEXT escapes backslashes, commas, semicolons and newlines;
+  forbidden control characters return 422. CRLF lines fold at 75 UTF-8 octets
+  without splitting code points. Response is a UTF-8 `text/calendar` attachment
+  named `meditations-calendar.ics`.
+
+The calendar's **Export work blocks** expands an inline checkbox list. Candidates
+are blocks overlapping the displayed month, following owner scope/search/status;
+neighboring grid days alone do not qualify. Every candidate starts unchecked.
+Changing month/scope/search resets selection. Removed candidates are excluded at
+submission; the selected ID payload freezes before a native save dialog opens.
+Loading, query errors, and pending block moves disable export. Each selected block
+exports its complete interval, including portions outside the month. Pending,
+empty, error/retry, cancellation, and saved/download-started states are explicit.
+Browser/native downloads reuse the shared private file delivery lifecycle without
+changing tasks or block caches. Browser URLs release on retry or departure;
+native saves create a new private file and finish once a path is chosen.
+
+Export is an unencrypted snapshot, instead of synchronization or a restorable
+backup. Finish saving edits first. Stable UIDs support identification, but client
+reimport/update behavior varies; repeated imports can duplicate events. Deleting
+or moving blocks does not update previously imported copies. File imports are
+independent read-only inventories (ICS-02 below); subscriptions and calendar-series
+expansion remain deferred. Outbound CalDAV is described in §6.4.
+
+#### Read-only iCalendar file imports (ICS-02)
+
+`calendar_import/` owns parsing, identity and atomic persistence separately from
+snapshot export, task recurrence and outbound CalDAV. The Settings import section
+accepts an explicit new named destination or an existing source ID; filenames
+and names never identify sources. Source-scoped identity is UID + an explicit
+master marker or the original typed recurrence ID, including its TZID. Moving an
+exception cannot change its original occurrence identity. Floating identities
+remain explicit. No imported event has a task/block/CalDAV-link relationship.
+
+Schema v13 stores `calendar_import_sources`, `calendar_import_snapshots`, and
+`calendar_import_events`. Every successful upload retains the original text,
+including calendar-level properties and timezone definitions; inventory rows
+reference their supplying snapshot. Canonical component text plus calendar
+context determines unchanged detection, while original snapshots provide lossless
+retention. Changed matching identities replace inventory data; omitted identities
+remain untouched, including cancellations and exceptions. The latest explicit
+import wins regardless of SEQUENCE or DTSTAMP. Duplicate identities in one file
+reject the entire upload; independent sources may contain identical UIDs.
+
+The maintained `icalendar` library parses content with additional framing,
+component-hierarchy, typed-identity and value checks. VEVENTs, their VALARMs,
+and VTIMEZONE definitions are retained as data; unsupported components such as
+VTODO/VJOURNAL/VFREEBUSY reject the complete upload. RRULE/RDATE/EXDATE, range
+exceptions, floating times and custom properties are opaque/read-only. Nothing
+expands occurrences, resolves source times to stored UTC datetimes, executes
+alarms, follows attachment URLs or sends invitations. Source time strings are
+explicitly labeled in the inventory instead of being guessed in the device zone.
+Normal application timestamps remain naive UTC.
+
+`POST /api/calendar/imports` validates before writing and commits the source,
+snapshot and all changed events together. A missing source returns 404; rejected
+content returns 422 with no partial changes. GET lists sources, reads per-source
+event inventory or original upload snapshots. DELETE removes a source with
+cascading inventory/snapshot cleanup. SQLite backup/offline restore preserve all
+import data; ordinary portable ZIP export excludes it. Upload history is retained
+until the source is removed, so backups may contain private imported content.
+
+The self-contained Settings section supports file selection, explicit repeat
+imports, inventory inspection, confirmed removal, pending states and retry.
+The separate `['calendar-imports']` query family never invalidates tasks or
+telemetry. Payloads capture destination and file at submission; the pending
+mutation covers file reading and API persistence and survives view departure.
+Completion refreshes inventory caches even after navigation; view-local notices
+are shown only when the initiating view remains mounted. The standalone overlay
+below reads this inventory without expanding recurrence.
+
+See [calendar import usage and API](docs/calendar-import.md).
+
+#### Read-only imported calendar overlay (SYNC-01)
+
+Calendar can display one explicitly selected imported file destination alongside
+local deadlines and work blocks. Hidden is the initial state on each Calendar
+mount; selection is view-local, persists across month/task-filter changes, and
+is independent of task list, search and status filters. Imported chips have a
+calendar icon, dashed outline and Imported label. They open the existing day
+dialog for read-only interval/status details; they have no drag, reschedule,
+completion, export selection or outbound-sync authority. Two imported chips per
+day are shown before overflow; the day dialog includes all overlapping items.
+
+`GET /api/calendar/imports/{source_id}/overlay` delegates to the separate
+`calendar_import/overlay.py` projection. It returns `{source_id, items, unplaced}`;
+placed records retain source/event IDs, UID, summary and status with an explicit
+`interval` of `date`, `timed` or `floating`, each with `start` and `end` strings.
+Date intervals use exclusive ends; missing date ends default to the next day.
+Timed instants resolve using the supplying snapshot's timezone context and return
+UTC ISO strings ending in Z. Embedded VTIMEZONE definitions take precedence over
+registry zones, and each event uses its own snapshot even when another source or
+reimport defines the same TZID differently. Without an embedded definition, IANA
+zones resolve through ZoneInfo; parser-global cached definitions are never used.
+Clock values and timezone parameters come from the original snapshot component,
+instead of library serialization, which can replace a TZID with a UTC suffix.
+Repeat-import equality compares original start/end parameters and values as well
+as the canonical component/context, so changed clock intent refreshes the record.
+Floating offset-free values retain source clock
+labels and occupy those local calendar dates without assigning an instant, even
+inside a device DST gap. Missing timed/floating ends are point events. Timed
+placement uses browser-local half-open day boundaries, so DST-length days and
+cross-midnight events retain their correct overlap. Points appear on their
+start day; events ending at midnight do not occupy the next day.
+
+Recurring masters/exceptions (including a master sharing a UID with an exception),
+cancellations, DURATION-based events, unknown zones, ambiguous/nonexistent named
+local times and invalid/incomparable intervals are listed outside the grid with
+explicit reasons. No occurrence expansion, guessed duration, alarm execution or
+URL fetch occurs. Original imports remain unchanged. Descriptions, attendees,
+attachments and raw snapshots are omitted from the projection response. Empty,
+loading and retryable error states are explicit; failed queries hide stale
+appointments. Selection changes never display the previous source's response.
+
+The overlay lives only in the independent `['calendar-imports']` query family;
+reimport/removal invalidates it without task/telemetry invalidations. There is no
+new schema, persistent preference, dependency or remote fetch. Files are snapshots;
+updates require explicit reimport. Live CalDAV inbound reconciliation remains
+SYNC-02, and URL subscriptions remain a separate future feature.
+
+
+#### Read-only subscription evaluation (ICS-03)
+
+ICS-03 is a design evaluation, instead of a runtime subscription feature.
+External URL polling and publishing a Journal feed are separate directions:
+
+- **External URL → Journal**: recommend a future opt-in outbound GET worker with
+  separate source/polling state, credential-store protection for private URLs,
+  conditional HTTP validation and atomic complete-snapshot replacement. This must
+  not reuse file import's omission-preserving merge policy. Failed refreshes keep
+  the last good inventory. No inbound listener is needed. Recurrence stays opaque;
+  occurrence expansion remains deferred. Startup/resume and manual refresh operate
+  only while the application runs, with explicit stale/error status.
+- **Journal → calendar client**: defer publishing until stable addressing and
+  per-feed revocable authorization exist. The packaged ephemeral backend address
+  is unsuitable. A future feed requires persistent explicit block selection,
+  ICS-01 field/privacy semantics and read-only access isolated from application
+  mutation routes. Loopback serves same-machine clients only while Journal runs;
+  other devices need intentional reachable hosting. Cloud hosting/public relays
+  remain outside scope.
+
+Both directions are one-way and grant no authority to rewrite tasks, blocks or
+telemetry. The consuming client controls polling; refresh hints do not guarantee
+freshness or deletion propagation. Revocation cannot retract cached copies.
+No schema, API, worker or UI is added by this evaluation. See the
+[subscription evaluation](docs/calendar-subscriptions.md) for source identity,
+complete-feed assumptions, recovery, credential handling and implementation gates.
 
 ### 6.2 Feature Module 2: The Modern Journaling Engine
 1. **TipTap Markdown Block Editor**:
@@ -787,17 +1056,491 @@ the next startup or explicit reindex; no background embedding worker is added.
 `semantic` flag reports whether the rebuilt index contains a ready vector.
 
 
-### 6.4 Planned: Optional Local-First Calendar Interoperability
+### 6.4 Optional Local-First Calendar Interoperability
 
-Calendar interoperability is roadmap work, tracked in `todo.md`; the following defines the intended boundary rather than implemented functionality.
+Calendar interoperability is tracked in `todo.md`. ICS snapshots, backend
+connection setup, conditional dispatch, and a durable background queue are
+implemented, including Settings setup, explicit block selection, and synchronization
+controls. Read-only file imports are also implemented. ICS-03 evaluates subscriptions;
+URL polling and Journal feed publishing remain unimplemented. The sections below
+distinguish current modules from their future integration contracts.
 
 - **Local-only by default**: SQLite remains the source of truth for local tasks and time blocks. Calendar features require no app account; Google APIs, browser OAuth, and cloud notification relays are outside scope.
 - **ICS milestone first**: Export selected time blocks as iCalendar (`.ics`) events without calendar accounts, credentials, or a server. File export is a snapshot; import, read-only subscriptions, and CalDAV are separate later extensions instead of prerequisites.
-- **Deferred optional CalDAV client**: After ICS export ships, optionally connect to a user-managed server using its supported password/app-password authentication. Radicale may run as a user-level service, installed and managed by the user; Journal does not bundle, install, start, or manage it. Verify server interoperability separately, including Nextcloud and Baïkal. OAuth-only server configurations are outside scope.
-- **Future sync availability**: Journal synchronizes only while running. A localhost server serves clients on the same machine; other devices need a reachable server. No public callback endpoint is required.
+- **Optional CalDAV connection API**: Connect to a user-managed server using supported password/app-password authentication through the backend API. Settings provides setup, explicit per-block opt-in, pause/enablement, and manual synchronization. Radicale may run as a user-level service, installed and managed by the user; Journal does not bundle, install, start, or manage it. Verify server interoperability separately, including Nextcloud and Baïkal. OAuth-only server configurations are outside scope.
+- **Sync availability**: Journal synchronizes only while running. A localhost server serves clients on the same machine; other devices need a reachable server. No public callback endpoint is required.
 - **Domain separation**: Calendar events and task-linked time blocks remain distinct from task deadlines, completion, and scoring. CalDAV `VTODO` task synchronization is a separate optional feature.
 - **Module boundary**: Keep ICS serialization self-contained and independent of CalDAV. Any future CalDAV adapter, synchronization service, worker, and connection routes live in separate modules. Local changes commit independently of the server; persist resource links, UIDs, ETags, and queued work. Use conditional writes and explicit conflict states; use optional sync tokens with an ETag-based reconciliation fallback.
-- **Future connection credentials**: Keep server credentials behind an OS credential-store interface and outside ordinary settings and data exports. Linux desktop calendar bridges and outgoing automation remain optional extensions.
+- **Connection credentials (CAL-03)**: Server credentials use a dedicated OS credential-store interface, outside ordinary settings and data exports. Linux desktop calendar bridges remain optional extensions. Outgoing automation has its own opt-in configuration and delivery ledger, independent of calendar synchronization.
+
+#### Optional outgoing automation (HOOK-01 through HOOK-04)
+
+- `backend/app/webhooks/` owns event capture, management routes, signing, and background delivery. Schema v14 adds endpoint configuration, durable per-entity versions, and a transactional per-endpoint outbox. Normal migrations, recovery checkpoints, and SQLite backups include these tables; portable exports continue to exclude automation configuration, delivery payloads, and credentials.
+- SQLAlchemy flush capture writes `time_block.created`, `time_block.updated`, `time_block.deleted`, and `task.completed` deliveries in the same transaction as source changes. Database-cascaded time-block deletions retain a snapshot before deletion. Rollback removes the corresponding outbox work. Local saves do not call HTTP endpoints or the credential vault.
+- Version-1 envelopes contain stable event/entity IDs, monotonic per-entity versions, UTC occurrence timestamps, and explicitly allowlisted scheduling metadata. Retries retain their envelope identity and payload. All-day intervals use exclusive date ends; timed intervals use UTC instants and retain time-zone metadata. Task deadlines retain none/date/timed semantics. Journal text, task descriptions, and credentials are excluded; sharing task titles requires separate opt-in.
+- Endpoints select event types and either all tasks or explicit list IDs. Scope is evaluated at the source change; this is a future-event stream, without historical inventory or automatic reconciliation when a task moves between lists. Configuration changes cancel queued/failed payloads so an earlier privacy choice cannot be replayed to a new destination. Disable/removal also cancel queued work; re-enabling does not revive canceled events. Already accepted HTTP work cannot be recalled.
+- The backend lifecycle runs the delivery worker only while Journal is running. Pending work survives restart. Transient network failures and retryable HTTP responses use durable delayed retries; terminal errors remain available for manual retry. Delivery is at least once, independent across endpoints; consumers deduplicate event IDs and compare entity versions instead of assuming arrival order or gapless versions. Consumer tombstones prevent delayed updates from resurrecting deletions.
+- HMAC-SHA256 signs `timestamp + "." + raw JSON body`, using `X-Journal-Timestamp` and `X-Journal-Signature: sha256=<hex>`; `X-Journal-Event-Id` identifies retries. Secrets use the existing credential-store interface with a webhook-specific database namespace, never ordinary settings or payloads. HTTP redirects are not followed. Endpoint URLs reject userinfo, query strings, and fragments. HTTP loopback/private endpoints remain usable for user-managed local workflows.
+- Settings owns endpoint selection, event/list scope, explicit title sharing, enable/disable/removal, synthetic test delivery, delivery status/errors, and retry. A delivered request means receiver acknowledgement, not confirmed calendar synchronization. The independent module does not require a public listener, cloud account, or calendar connection.
+- `docs/webhooks.md` documents the contract and workflow. `examples/webhooks/local_workflow.py` is an optional standard-library loopback receiver with signature verification, durable receipt deduplication, version checks, deletion tombstones, and a separate completion policy. It stores a projection instead of issuing real calendar writes; downstream effects need their own durable/idempotent integration. Dedicated backend and frontend tests use fake vaults and stub endpoints, without real credentials or network services.
+
+
+#### Calendar integration foundation (CAL-02)
+
+Schema v8 adds `calendar_connections` and `calendar_links` without credentials.
+Connections record server/calendar URLs, explicit connection state, and disabled
+synchronization by default. Links retain block identity, destination/resource
+identity, UID, acknowledged ETag, local/acknowledged revisions, desired action,
+payload preparation state, sync state, and error state. One link per original
+block prevents simultaneous destinations; destination/resource pairs are unique.
+A nullable block FK uses SET NULL on source deletion while independent identity
+and mapping survive; connection deletion is restricted while links exist.
+No existing block is opted in during migration. Frozen migration, pre-upgrade
+checkpoint, backup, and offline restore paths include the new tables. Portable
+export's existing allowlist excludes synchronization metadata and payloads.
+
+`app/calendar_sync/adapter.py` implements async CalDAV wire operations using
+caller-owned `httpx.AsyncClient` instances. It discovers principals, calendar
+homes, event collections and write privileges; lists resource URLs/strong ETags;
+and supports GET, conditional create/update, and conditional delete. DAV XML,
+propstat/status failures, invalid ETags, redirects, and cross-origin hrefs fail
+explicitly. DTD/entity declarations are rejected. Authentication, missing
+resources, precondition conflicts, transport failures, and protocol failures
+remain distinct. There are no hidden retries: transport or response failures
+after a mutation can leave an uncertain outcome for CAL-04 to reconcile.
+Optional sync tokens are not used; complete Depth-1 listings provide the initial
+ETag reconciliation capability. No provider-specific support is claimed.
+
+`service.py` compares a complete listing against explicitly supplied link
+snapshots. `worker.py` exposes one read-only inspection pass with an injected
+adapter factory. Only enabled, connected destinations and acknowledged `synced`
+links are inspected. Changed/missing remote resources become conflicts;
+authentication failures mark the connection authentication-required. Conditional
+local updates protect newer revisions, detached links, and changed connection
+state from stale inspection results. Network/protocol failures propagate without
+inferring remote deletions. The worker never publishes or deletes remote events.
+The lifecycle queue invokes read-only inspection after dispatching each eligible
+connection; callers can still invoke inspection independently.
+
+`/api/calendar/connections` provides GET and POST for local disconnected drafts.
+POST accepts only same-origin HTTP(S) server/calendar URLs, without credentials,
+query strings or fragments; the collection URL ends in `/`. Unknown/enabling
+fields are rejected. GET `/{id}/links` exposes only that connection's mappings;
+DELETE `/{id}` removes only disconnected, disabled drafts without links. These
+draft routes perform no server requests. CAL-03 adds explicit authentication
+operations below; CAL-06 adds user controls. Calendar connections, status, and
+links use independent frontend query families, separate from tasks/time blocks.
+
+CAL-03 supplies credential-store-backed verification, selection, and
+reconnection as described below. CAL-04 adds explicitly invoked conditional
+dispatch and uncertain-outcome recovery; adapter mutation primitives alone do
+not implement idempotent sync.
+CAL-05 adds atomic deletion/edit capture and lifecycle queue scheduling below.
+A BEFORE DELETE trigger records remote cleanup before SET NULL removes the source
+FK. CAL-06 owns opt-in/enablement controls; CAL-07 owns live-server/packaged
+interoperability checks.
+
+#### Authenticated calendar connections (CAL-03)
+
+`calendar_sync/connections.py` owns explicit discovery, connect/credential
+replacement, verification, disconnect, and draft deletion. Authentication inputs
+require username, password/app password, and `auth_type` (`basic` or `digest`).
+`transport.py` creates isolated authenticated clients: default certificate
+verification, no redirects, environment/netrc/proxy authentication disabled, and
+no implicit retries. Credential-bearing API operations require HTTPS or exact
+localhost/loopback HTTP. Remote plaintext HTTP and browser OAuth are outside the
+API's supported authentication policy. Users supply and manage their server;
+there is no automatic server installation, calendar creation, or cloud account.
+
+Additional POST operations under `/api/calendar/connections/{id}`:
+
+| Operation | Input and behavior |
+|---|---|
+| `/discover` | Username/password/auth type; return discovered calendar URLs, names, writable and VEVENT capabilities without persisting credentials or selecting a calendar |
+| `/connect` | Same credentials plus a selected `calendar_url`; rediscover and verify that exact writable event calendar before saving credentials |
+| `/verify` | Use saved OS credentials to rediscover and verify the selected calendar |
+| `/disconnect` | Disable activity, detach mappings, remove local credentials, leave remote resources unchanged |
+
+Connect and verify return connection metadata only. Calendar selection is
+explicit; recommend a dedicated Meditations calendar. Existing links prevent
+retargeting a connection, including when detached. Supplying changed credentials
+replaces the stored credential blob only after successful verification. Failed
+connect/verify attempts leave synchronization disabled and the connection
+`authentication_required`; unsuccessful replacement discovery leaves previous
+credentials untouched. Missing credentials require resubmission. Unavailable or
+locked OS storage returns an actionable failure instead of a plaintext fallback.
+Discovery is ephemeral and does not change an existing connection's state.
+
+Schema v9 appends `credential_state` (`absent`, `present`, `removal_pending`) to
+connections; all v8 rows begin absent. These are bookkeeping values, instead of
+secrets. Username, password, and auth type live in a single versioned OS-vault
+blob per connection under a database-scoped service name. The namespace hashes
+the canonical database path; separate file databases use separate credentials,
+and each in-memory lifecycle uses a new namespace. Moving/copying a database to
+a different path requires supplying credentials again; old vault records require
+cleanup using the original database/path or the OS vault interface. SQLite
+backups/checkpoints preserve metadata but cannot back up or restore OS secrets.
+Ordinary exports continue to exclude all integration tables and credentials.
+
+`credentials.py` selects a deterministic built-in backend per platform: Linux
+Secret Service, macOS Keychain, Windows Credential Manager. KWallet can be used
+through a Secret Service-compatible interface where provided; direct KWallet
+DBus fallback is not selected. The store never uses keyring plugin/chainer or
+file/plaintext fallbacks, and never switches vaults because one is temporarily
+unavailable. Backend access is lazy and off the event loop; local-only startup,
+CRUD, and unused-draft deletion need no unlocked vault. Credential-thread
+cancellation drains the running operation before lifecycle cleanup continues.
+The audited `keyring` dependency and platform backend are included in sidecar
+packaging; native service availability still depends on the user's OS/session.
+
+Per-connection locks serialize credential changes, verification, disconnect,
+and deletion within the database-owning backend. Before writing or removing a
+vault blob, persist disabled `removal_pending` metadata. A crash, cancellation,
+or ambiguous store/DB failure leaves that state recoverable: explicitly retry
+disconnect to remove any possible blob before reconnecting. Disconnect commits
+disabled/disconnected state and detached links before deleting credentials. A
+locked-store removal failure returns an error with removal still pending; it
+never reports complete cleanup. Repeating disconnect is idempotent. Link payload,
+identity and revisions survive detachment; a previously syncing link receives an
+explicit uncertain-outcome marker. No disconnect path sends remote DELETEs.
+Draft deletion requires no links and credential state absent.
+
+Every backend startup disables connection activity and changes previously
+connected rows to `authentication_required`, without opening a vault or making a
+network request. Call verify (or connect with new credentials) explicitly after
+restart/restore; connected means the last explicit verification succeeded,
+instead of a continuous reachability guarantee. Connection verification never
+enables synchronization, opts in blocks, reattaches mappings, or settles remote
+conflicts. The CAL-05 queue reconciles eligible work through CAL-04 before
+retrying writes; verification and explicit enablement remain prerequisites.
+Settings exposes these operations through CAL-06 below. CAL-07 verifies Radicale
+3.9.0 over isolated loopback HTTP; Nextcloud/Baïkal and native credential-service
+connectivity remain unverified. Packaged discovery is tested separately below.
+
+#### Conditional outbound dispatch (CAL-04)
+
+`app/calendar_sync/outbound.py` exposes `OutboundService(sessions, manager)` with
+explicit `prepare(link_id)`, `dispatch(link_id)`, and local-only `detach(link_id)`
+operations. CAL-05 supplies a lifecycle worker and transactional source-change
+capture; CAL-06 exposes explicit opt-in, enablement, and user controls through
+connection-scoped HTTP routes. Setup and verification alone never publish blocks.
+
+Schema v10 adds `calendar_dispatches`: one immutable revision per link, containing
+the action, resource URL, UID, expected ETag, serialized payload, and explicit
+attempted flag. Links also record `acknowledged_action` (`unknown`, `upsert`, or
+`delete`); legacy acknowledged ETags backfill `upsert`, otherwise `unknown`.
+This distinguishes a confirmed remote deletion from missing acknowledgment
+metadata. It survives source changes and cascaded source deletion through
+the retained link. Migration/checkpoint/backup/offline restore include the table;
+ordinary portable exports exclude it. Preparation freezes ICS-01 projection and
+DTSTAMP, adding a random `X-JOURNAL-DISPATCH` ownership marker. Retrying preserves
+the entire payload. Source representation errors persist locally and can be
+retried after repair without contacting the provider.
+
+All operations share the application-scoped connection manager's lifecycle lock;
+callers MUST reuse that manager. This serializes writes, credential replacement,
+disconnect, and detachment in the single database-owning backend. Database
+transactions end before HTTP. Preparation validates the stable block UID and
+immediate resource membership in the recorded selected calendar. Dispatch checks
+identity, revision bounds, and expected ETag again. Missing source rows do not
+prevent dispatch of an already frozen revision or durable deletion intent.
+
+Before each mutation, GET reconciles the exact linked resource. A first create
+requires absence even if an existing event has identical UID or payload. The
+attempted flag commits before a conditional request; creation uses
+`If-None-Match: *`, updates/deletes use the acknowledged strong `If-Match`.
+After interruption, identical validated properties including the random marker
+are ownership evidence for acknowledging a previously attempted upsert. Only
+RFC line folding and property order within the same component are ignored;
+values, parameters, whitespace, cardinality, and component boundaries remain exact. An absent
+resource permits retry of that same uncertain create, never a second URL.
+Unchanged acknowledged ETags allow retry of unapplied updates/deletes. Absence
+after an attempted delete acknowledges removal; absence before a first delete
+or update is a conflict. Divergent remote content/ETags, precondition failures,
+or unsupported remote semantics become conflicts instead of unconditional writes.
+
+Remote validation deliberately accepts a narrow serializer-compatible grammar:
+one nonrecurring VEVENT, matching UID, UTC timed or exclusive-end DATE intervals,
+and known properties. Unknown properties/parameters, nested components,
+recurrence, attendees, and organizer block automatic writes. Property reordering
+and folding are supported because Radicale applies these syntax-only changes.
+Other canonicalization, including changed property values or added fields,
+can still produce a conflict after a successful but unacknowledged write.
+Explicit detachment leaves remote content unchanged and retains
+unresolved dispatch evidence. Detached/conflicted links cannot dispatch again.
+
+Successful acknowledgment and dispatch removal commit together. Only that
+revision is acknowledged; newer edits or deletion intents remain pending and
+use the returned ETag on the next pass. Authentication failures disable the
+connection and require verification; other operational failures retain retryable
+intent with fixed, privacy-safe errors. Cancellation or acknowledgment-commit
+failure leaves the dispatch available for reconciliation. A newer opt-in after
+an acknowledged deletion conditionally creates at the same URL/UID instead of
+starting an independent identity. An orphan `syncing` link or acknowledged link
+without an ETag or confirmed deletion requires explicit detachment. Startup
+continues to disable connections, so recovery never initiates outbound writes
+without explicit verification and later enablement. The lifecycle queue preserves
+this ordering.
+
+#### Durable offline queue (CAL-05)
+
+Schema v11 installs three frozen SQLite triggers. Relevant block shape, interval,
+zone, or ownership changes and task title/canceled-status changes increment each
+active link's local revision in the same transaction as the source write.
+Timestamp-only edits, task completion/reopening among non-canceled states,
+deadlines, descriptions, focus, and scoring do not change the event projection.
+No trigger creates a link or opts in a block. Detached links and existing delete
+intent stay untouched; conflicts remain conflicts. Block deletion, including
+cascaded task/subtask deletion, records delete intent before SET NULL. Legacy
+active orphan links acquire delete intent during migration. Cached link payloads
+are invalidated; immutable dispatch rows, URLs, UIDs, and ETags remain intact.
+Backup/restore includes triggers; restore rejects missing or modified required
+trigger definitions. Older backups acquire them through staged migration.
+
+`calendar_sync/queue_worker.py` owns `QueueWorker.run_once()` and lifecycle
+`serve()`. A pass selects a finite snapshot of eligible work, dispatches each
+link at most once, and inspects acknowledged resources for remote changes.
+Only connected, explicitly enabled, credential-present connections participate;
+conflicted/detached links are excluded. Each operation rechecks lifecycle gates
+under the shared connection manager lock. A failed link does not block other
+links on ordinary transport/authentication failures. Local source writes never
+wait for the vault or server. No SQLite transaction spans an HTTP request.
+
+The worker runs immediately after startup verification/search recovery, then
+waits 30 seconds after each completed pass. This is fixed-interval retry, without
+exponential backoff, OS network notifications, or persistent attempt timing.
+SQLite intent and dispatch evidence are authoritative; recreating the worker
+needs no in-memory recovery state. Network/vault failures retry on later passes;
+authentication failures disable activity until explicit verification and
+reenablement. Conflict resolution remains explicit detachment instead of remote
+overwrite. Read-only inventory failures never imply remote deletion. Worker
+cancellation is awaited before engine disposal and preserves uncertain dispatches.
+
+An offline create deleted before any remote mutation attempt is settled locally
+without creating or deleting an event. If creation may have been attempted,
+reconcile its immutable revision first and process the newer deletion on a later
+pass. Acknowledgment evaluates the current local revision in SQL at UPDATE time;
+a concurrent source edit cannot be mislabeled synced by a stale read. Only the
+acknowledged revision is settled; newer revisions remain pending. Reopening the
+app still requires verification and explicit enablement, and disconnect retains
+detached mappings without remote cleanup. CAL-06 exposes opt-in, pause/resume,
+queue status, and manual synchronization below. Setup alone leaves the queue
+disabled. CAL-07 verifies live Radicale and packaged discovery below; native
+vault and full desktop synchronization remain separate unverified checks.
+
+#### Settings and synchronization controls (CAL-06)
+
+`components/calendar-settings.tsx` and its connection-controls component extend
+Settings without making calendar setup a prerequisite for local use. The setup
+flow creates a disabled draft, discovers calendars using explicit Basic/Digest
+credentials, then requires selection of a writable event calendar before saving
+credentials. A dedicated Meditations calendar is recommended. Password-bearing
+discovery/connect requests stay outside React Query caches; passwords remain
+component-local and clear after connection or failure. Ordinary controls use an
+independent calendar query family; task data remains in the canonical tasks cache.
+Connection status and links refresh every ten seconds while Settings is mounted.
+
+`calendar_sync/controls.py` exposes connection-scoped local intent and user
+operations, reusing the application queue worker and connection lifecycle locks:
+
+| Route suffix under `/api/calendar/connections/{id}` | Behavior |
+|---|---|
+| `PATCH /sync` with `{ "enabled": true/false }` | Explicit enable/pause; enabling requires a verified connection and stored credentials |
+| `GET /status` | Connection metadata, queued/conflict/error/detached counts, and acknowledgment-based last-success information |
+| `POST /sync-now` | One finite, connection-scoped queue pass; requires explicit enablement, without opting in blocks |
+| `POST /blocks/{block_id}/opt-in` | Link only the selected whole block; reuse its retained identity on explicit re-opt-in after opt-out |
+| `POST /blocks/{block_id}/opt-out` | Queue conditional remote deletion while preserving the local block/task; works while paused or authentication is required |
+| `POST /links/{link_id}/detach` | Stop synchronization and retain remote content; explicit conflict resolution without overwriting either side |
+
+Setup, verification, and enablement never select blocks automatically. Settings
+identifies blocks by owner title and timed/all-day interval. Synced links have a
+server acknowledgment; queued local saves, conflicts, errors, and detached
+mappings remain distinct. Sync now can finish with pending/error/conflict work
+and is not a blanket success assertion. Unlock/retry OS credential failures;
+verify or replace credentials for authentication errors. Conflicts can be detached
+instead of forcing remote overwrites. Disconnect removes credentials and keeps
+remote copies; opt-out queues deletion instead. Setup never installs a server.
+The app and user-managed server must be running and reachable; localhost serves
+only the same device. CAL-07 adds live Radicale and packaged discovery checks;
+native-vault and full desktop end-to-end synchronization remain unverified.
+
+Schema v12 adds `last_synced_at` and explicit link `selection_state`
+(`opted_in`, `opted_out`, `detached`). A real or reconciled remote acknowledgment
+records naive-UTC sync time, preserved through later edits and conflicts.
+Historical acknowledgment times remain unknown rather than being inferred from
+`updated_at`; status distinguishes `observed`, `unknown`, and `never`. Settling a
+never-attempted canceled create locally does not invent a successful remote sync.
+Explicit selection state distinguishes completed opt-out cleanup, which permits
+re-opt-in at the same URL/UID, from deliberate detach/disconnect, which requires
+reconciliation. Pending/uncertain deletion keeps its immutable dispatch when a
+newer explicit opt-in queues the next revision. Migration, checkpoints, and
+offline recovery preserve these fields; portable export excludes sync metadata.
+
+#### Outbound time-block synchronization contract (CAL-01)
+
+This is the implementation contract for CAL-02 through CAL-07; connection APIs
+and the durable dispatch queue exist, with explicit Settings controls in CAL-06.
+ICS-01 remains a separate,
+per-download snapshot operation. The first CalDAV phase publishes individual
+local work blocks as independent `VEVENT` resources; inbound overlays,
+calendar series, and bidirectional edits remain later work.
+
+**Selection and ownership**
+
+- Connection setup selects one writable event calendar. Recommend a dedicated
+  **Meditations** calendar, but never create or select one without consent.
+  Server installation and availability remain user-managed.
+- Each block starts explicitly `unlinked`. Only an explicit per-block opt-in
+  creates a durable link to that connection and selected calendar. Connecting,
+  opening Calendar, downloading ICS, creating a block, or selecting a task/list
+  does not opt in any block. Opt-in applies to the whole interval, independent
+  of the displayed month, search, or terminal-task visibility.
+- The initial outbound scope permits one active destination per block. Calendar
+  changes cannot silently retarget existing links: resolve or explicitly detach
+  old links before selecting a replacement destination. Bulk selection must
+  identify the affected blocks before confirmation.
+- SQLite owns local task and block data. A linked remote event is a published
+  projection, instead of permission to modify local tasks. Remote changes never
+  complete tasks, record focus, recalculate scores, or spawn recurring tasks.
+  New blocks and completion-generated successors require their own opt-in.
+
+**Event projection**
+
+| Local source | Outbound representation |
+|---|---|
+| Block ID | The stable ICS-01 UUID5-derived UID, unchanged by edits, opt-out/re-opt-in, or reconnect |
+| Timed start/end | UTC `DTSTART`/`DTEND` with `Z`; persist local naive-UTC values unchanged |
+| Timed IANA metadata | `X-JOURNAL-TIMEZONE`; UTC instants remain authoritative |
+| All-day start/end | `VALUE=DATE` labels with exclusive `DTEND`; no UTC conversion |
+| Owner task title | Escaped `SUMMARY` |
+| Owner task status | `canceled` maps to `CANCELLED`; todo, in-progress, and completed map to `CONFIRMED` |
+| Block creation/update and task update | `CREATED` and `LAST-MODIFIED` follow ICS-01; `DTSTAMP` belongs to the persisted outbound revision |
+
+The exact UID formula and serialization rules are defined in ICS-01 above.
+Each resource contains one nonrecurring event, without `RRULE`, `RECURRENCE-ID`,
+attendees, organizer, or scheduling invitations. Task deadlines, descriptions,
+tags, journals, ratings, credentials, focus history, and task recurrence rules
+are excluded. Whole-second precision and atomic validation failures follow
+ICS-01; unrepresentable content enters an actionable error state instead of
+changing local data. A retry of the same queued revision retains its payload
+and timestamps; a later edit to the projected content creates a newer revision.
+Task timestamp changes alone do not enqueue writes. When a mapped content field
+changes, compute LAST-MODIFIED from the current source timestamps.
+
+**Lifecycle and remote effects**
+
+| Local action | Required outbound effect |
+|---|---|
+| Edit a linked block's interval, kind, zone, or task association | Update the same linked resource and UID from the latest owner/block projection |
+| Rename the owner task | Update SUMMARY for its opted-in blocks only |
+| Complete or reopen the owner | Keep the event and link; apply the status mapping without inferring attendance |
+| Cancel the owner | Keep the event and publish CANCELLED; reopening restores CONFIRMED |
+| Change deadline, list, hierarchy, focus, or task recurrence | No event-content change unless a mapped field also changes |
+| Delete a block, task, or containing list with cascaded blocks | Persist linked-resource deletion intent in the local deletion transaction before rows disappear |
+| Opt out of a linked block | Queue deletion of its linked event; keep local block/task data intact |
+| Pause synchronization | Keep links and pending changes; perform no remote writes until resumed |
+| Disconnect | Stop work, remove local credentials, and leave remote events in place; detach links only after in-flight outcomes are recorded or marked uncertain |
+
+Deletion intent retains destination identity, UID, resource URL, last known ETag,
+and local revision after the source row is gone. It survives offline operation
+and restart until deletion is acknowledged or the user explicitly detaches it.
+Opt-out remains visibly pending until resolved. Opt-in during pending deletion
+must serialize reconciliation of the same identity instead of issuing an
+independent create. Local edits and deletions commit without waiting for network
+access; the worker runs only while the backend is running.
+
+Disconnect is distinct from opt-out. Pending work must never resume merely
+because credentials for a different server/calendar are entered. Retain detached
+mapping and unresolved-outcome metadata without credentials for explicit
+reconnection/recovery; disconnect itself performs no remote cleanup. Remote
+cleanup, if offered, requires a separate confirmation identifying only linked
+resources and must finish while authenticated, or report unresolved resources
+before detachment. Deleting an entire remote calendar is outside this contract.
+
+**Identity, failures, and conflict boundary**
+
+- Persist connection/calendar identity, UID, resource URL, acknowledged ETag,
+  local revision, and explicit sync state. Display `unlinked`, `pending`,
+  `syncing`, `synced`, `conflict`, `error`, and `detached` link states; connection
+  authentication state is separate. A local save is never presented as remote
+  success. A newer local revision stays pending after an older write succeeds.
+  Permit at most one in-flight mutation per link; subsequent writes use the
+  latest acknowledged ETag. Only undispatched revisions may be coalesced. An
+  opt-out during an uncertain create must resolve creation before cleanup.
+- Creation uses a durable resource identity and creation precondition. Recover
+  uncertain creates by inspecting that resource and UID before retrying; never
+  create a second event to resolve an unknown result. Stable UID alone is
+  insufficient evidence of ownership: an ICS-imported event with the same UID
+  is a collision to resolve, instead of a resource to adopt or overwrite.
+- Updates and deletes use acknowledged ETags and conditional requests. Remote
+  edits or deletion of a linked event enter `conflict`; they do not silently
+  overwrite local data or trigger unconditional recreation/deletion. Missing
+  resources after an uncertain delete require reconciliation before success.
+  Remote recurrence or other unsupported semantics also block automatic writes.
+  Conflict resolution must offer explicit detachment that leaves the remote
+  resource unchanged. Deliberate republishing of local content requires review
+  of current remote state and fresh conditional-write protection; unsupported
+  recurrence remains blocked instead of being flattened by that action.
+- Authentication/network failures retain intent and expose retryable states.
+  Only linked resources in the recorded destination may be changed. Reconnect
+  to the same destination requires explicit reconciliation of detached mappings,
+  uncertain writes, and remote changes before pending work resumes. A different
+  destination requires fresh opt-in; previously published copies remain there.
+- Backup restore preserves IDs and can roll back synchronization metadata. Before
+  outbound writes after recovery, reconcile recorded links with the server;
+  never assume a restored `synced` state or ETag is current. Concurrent writers
+  from copied databases are outside the initial supported ownership model.
+
+**Implementation acceptance scenarios**
+
+CAL-02 through CAL-07 must test the following with a fake adapter before claiming
+this contract is implemented: an unlinked block and ordinary deadline cause no
+remote writes; opt-in publishes only the selected block; title/interval/kind
+changes keep identity; completion leaves blocks and telemetry independent;
+cancellation/reopening changes event status; offline opt-out and cascaded delete
+retain recoverable deletion intent; pause and disconnect leave remote copies
+intact; edits and opt-out during in-flight writes cannot resurrect events;
+reconnect and uncertain creates cannot duplicate events; remote edits or
+deletes block automatic writes; and timed/all-day values retain ICS-01 semantics
+across DST. Server-specific interoperability and packaged connectivity require
+separate verification under CAL-07.
+
+#### Interoperability verification (CAL-07)
+
+Ordinary `uv run pytest` collects only `backend/tests/`: adapters, vaults, AI,
+and embeddings remain stubbed, with no real accounts or network services.
+The explicit `calendar-test` dependency group pins Radicale 3.9.0 solely for
+`uv run --locked --group calendar-test pytest integration/test_radicale.py`.
+Radicale is not an application dependency and Journal never starts it in normal
+operation. The integration fixture runs its real WSGI application over a bound
+loopback socket with temporary collections, disposable Basic credentials, and
+owner-only rights. Each test closes the server/thread and disposes its isolated
+database. No OS vault or user database is accessed.
+
+The live suite verifies principal/home/calendar discovery, authentication denial,
+strong ETags, conditional create/update/delete and stale preconditions, selected
+block publication, completion/cancellation, all-day exclusive ends, UTC instants
+across both DST transitions, remote-edit conflicts, retained copies on disconnect,
+interrupted writes, and offline create/edit/delete through actual SQLite
+close/reopen, worker recreation, and explicit restart verification. Temporary WAL
+databases retain dispatch rows across those connection lifetimes. Lost-response
+checks cover creates, updates, and
+deletes; strict payload-identity unit tests cover syntax-only server rewrites
+without accepting semantic edits or preexisting resource collisions.
+
+Setting `JOURNAL_TEST_SIDECAR` to the absolute frozen executable also runs the
+existing isolated health/CRUD smoke with credential-bearing discovery against
+that same local server, writable VEVENT capability checks, and invalid-password
+rejection. It creates/removes only a disconnected local draft; it does not
+connect to an OS vault or inject a test credential-store bypass into production.
+The release workflow requires this suite after building the exact sidecar and
+before Tauri packaging or publication. Native vault access and full desktop
+outbound synchronization are not covered by this packaged discovery check.
+Nextcloud and Baïkal remain unverified; no provider-wide compatibility is claimed.
+
+[Calendar synchronization guide](docs/calendar-sync.md) documents optional
+user-managed Radicale setup, user-level service operation, device reachability,
+explicit publication, recovery, and unsupported recurrence.
 
 ---
 

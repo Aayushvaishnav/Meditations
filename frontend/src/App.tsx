@@ -2,22 +2,24 @@ import { AlertCircle } from "lucide-react"
 import { MotionConfig } from "framer-motion"
 import { FocusTimer } from "@/components/focus-timer"
 import { Header } from "@/components/header"
-import { JournalView } from "@/components/journal-editor"
 import { BriefingCard } from "@/components/briefing-card"
 import { CalendarView } from "@/components/calendar-view"
 import { CommandPalette } from "@/components/command-palette"
 import { KanbanBoard } from "@/components/kanban-board"
 import { QuickAdd } from "@/components/quick-add"
-import { InsightsView } from "@/components/insights"
-import { SecondBrain } from "@/components/second-brain"
-import { SettingsView } from "@/components/settings"
 import { Sidebar } from "@/components/sidebar"
 import { TaskSections } from "@/components/task-sections"
 import { KanbanSkeleton, TaskListSkeleton } from "@/components/skeletons"
 import { useLists, useTasks } from "@/hooks/api"
 import { THEMES, useUi } from "@/stores/ui"
-import { useEffect } from "react"
+import { lazy, Suspense, useEffect } from "react"
+import { SectionLoading } from "@/components/section-loading"
 import { Button } from "@/components/ui/button"
+
+const JournalView = lazy(() => import("@/components/journal-editor").then((m) => ({ default: m.JournalView })))
+const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ default: m.InsightsView })))
+const SecondBrain = lazy(() => import("@/components/second-brain").then((m) => ({ default: m.SecondBrain })))
+const SettingsView = lazy(() => import("@/components/settings").then((m) => ({ default: m.SettingsView })))
 
 function TasksErrorBanner({ onRetry }: { onRetry: () => void }) {
   return (
@@ -54,38 +56,40 @@ export default function App() {
     <MotionConfig reducedMotion="user">
       <div className="flex h-dvh overflow-hidden text-foreground">
         <Sidebar />
-        {section === "journal" ? (
-          <JournalView />
-        ) : section === "second_brain" ? (
-          <SecondBrain />
-        ) : section === "insights" ? (
-          <InsightsView />
-        ) : section === "settings" ? (
-          <SettingsView />
-        ) : (
-          <main className="flex min-w-0 flex-1 flex-col">
-            <Header />
-            <QuickAdd />
-            {view === "list" && !tasks.isError && scope.kind === "smart" && scope.id === "today" && <BriefingCard />}
-            <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
-              {tasks.isError ? (
-                <TasksErrorBanner onRetry={() => void tasks.refetch()} />
-              ) : tasks.isLoading ? (
-                view === "board" ? (
-                  <KanbanSkeleton />
+        <Suspense key={section} fallback={<SectionLoading section={section} />}>
+          {section === "journal" ? (
+            <JournalView />
+          ) : section === "second_brain" ? (
+            <SecondBrain />
+          ) : section === "insights" ? (
+            <InsightsView />
+          ) : section === "settings" ? (
+            <SettingsView />
+          ) : (
+            <main className="flex min-w-0 flex-1 flex-col">
+              <Header />
+              <QuickAdd />
+              {view === "list" && !tasks.isError && scope.kind === "smart" && scope.id === "today" && <BriefingCard />}
+              <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+                {tasks.isError ? (
+                  <TasksErrorBanner onRetry={() => void tasks.refetch()} />
+                ) : tasks.isLoading ? (
+                  view === "board" ? (
+                    <KanbanSkeleton />
+                  ) : (
+                    <TaskListSkeleton />
+                  )
+                ) : view === "calendar" ? (
+                  <CalendarView tasks={tasks.data ?? []} scope={scope} search={search} />
+                ) : view === "board" ? (
+                  <KanbanBoard tasks={tasks.data ?? []} search={search} />
                 ) : (
-                  <TaskListSkeleton />
-                )
-              ) : view === "calendar" ? (
-                <CalendarView tasks={tasks.data ?? []} scope={scope} search={search} />
-              ) : view === "board" ? (
-                <KanbanBoard tasks={tasks.data ?? []} search={search} />
-              ) : (
-                <TaskSections tasks={tasks.data ?? []} scope={scope} search={search} lists={lists.data ?? []} />
-              )}
-            </div>
-          </main>
-        )}
+                  <TaskSections tasks={tasks.data ?? []} scope={scope} search={search} lists={lists.data ?? []} />
+                )}
+              </div>
+            </main>
+          )}
+        </Suspense>
         <FocusTimer />
         <CommandPalette />
       </div>

@@ -3,6 +3,14 @@
 # startup — no onefile tmp extraction). Built from backend/ with:
 #   uv run pyinstaller sidecar.spec --noconfirm --distpath ../frontend/src-tauri/binaries
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
+import sys
+
+credential_backends = {
+    "linux": "keyring.backends.SecretService",
+    "darwin": "keyring.backends.macOS",
+    "win32": "keyring.backends.Windows",
+}
+credential_backend = credential_backends.get(sys.platform)
 
 datas = collect_data_files("sqlite_vec")  # bundles the vec0 loadable extension
 datas += collect_data_files("fastembed")
@@ -33,6 +41,7 @@ hiddenimports = (
     + collect_submodules("tzdata")
     + collect_submodules("uvicorn")
     + collect_submodules("pydantic_ai")
+    + ([credential_backend] if credential_backend else [])
     + [
         "fastembed",
         "onnxruntime",

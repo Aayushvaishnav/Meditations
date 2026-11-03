@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import ConfigDict, StringConstraints, computed_field, field_validator
 from sqlmodel import Field, SQLModel
 
+from app.recurrence import TaskRule
 from app.util import normalize_dt
 from app.task_deadlines import Deadline, DeadlineInput, NoDeadline, deadline_value
 from app.models import TaskFields
@@ -48,7 +49,7 @@ class TaskCreate(DeadlineInput, SQLModel):
     status: TaskStatus = "todo"
     due_date: datetime | None = None
     estimated_minutes: NonNegativeInt | None = None
-    recurrence_rule: str | None = None
+    recurrence_rule: TaskRule | None = None
     tags: list[str] = Field(default_factory=list)
 
     @field_validator("due_date")
@@ -65,7 +66,7 @@ class TaskUpdate(DeadlineInput, SQLModel):
     status: TaskStatus | None = None
     due_date: datetime | None = None
     estimated_minutes: NonNegativeInt | None = None
-    recurrence_rule: str | None = None
+    recurrence_rule: TaskRule | None = None
     tags: list[str] | None = None
     list_id: str | None = None
     parent_id: str | None = None

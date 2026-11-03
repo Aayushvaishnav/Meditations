@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.migrations.webhooks import migrate_webhooks
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
@@ -10,6 +12,12 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.migrations.baseline import STATEMENTS
+from app.migrations.calendar_import import migrate_calendar_import
+from app.migrations.calendar_sync_status import migrate_calendar_sync_status
+from app.migrations.calendar_dispatches import migrate_calendar_dispatches
+from app.migrations.calendar_credentials import migrate_calendar_credentials
+from app.migrations.calendar_queue import migrate_calendar_queue
+from app.migrations.calendar_sync import migrate_calendar_sync
 from app.migrations.time_block_shapes import migrate_time_block_shapes
 
 
@@ -79,6 +87,13 @@ MIGRATIONS: tuple[Callable[[AsyncConnection], Awaitable[None]], ...] = (
     _task_deadlines,
     _time_blocks,
     migrate_time_block_shapes,
+    migrate_calendar_sync,
+    migrate_calendar_credentials,
+    migrate_calendar_dispatches,
+    migrate_calendar_queue,
+    migrate_calendar_sync_status,
+    migrate_calendar_import,
+    migrate_webhooks,
 )
 LATEST_VERSION = len(MIGRATIONS)
 

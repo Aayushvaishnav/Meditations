@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import type { ImportedOverlay } from "@/api/calendar-overlay-types"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
+import { calendarSetupPending, subscribeCalendarSetup } from "@/lib/calendar-setup-operation"
 import { api, ApiError } from "@/api/client"
+import type { CalendarImportTarget, CalendarImportResult, ImportedCalendarSource, ImportedCalendarEvent } from "@/api/calendar-import-types"
 import { sseEvents } from "@/lib/stream"
 import { createBackup } from "@/lib/backup"
+import { createCalendarExport } from "@/lib/calendar-export"
 import { createDataExport } from "@/lib/data-export"
 import { startBrowserDownload, type FileDownloadResult } from "@/lib/file-download"
 import { deadlineFromLegacy } from "@/lib/task-deadlines"
@@ -28,11 +32,17 @@ import type {
   Task,
   TaskInput,
   TaskList,
+  TimeBlock,
+  TimeBlockInput,
+  CalendarConnection,
+  CalendarSyncStatus,
+  CalendarLinkView,
 } from "@/api/types"
 
 export const qk = {
   tasks: tasksKey,
   lists: ["lists"] as const,
+  timeBlocks: ["time-blocks"] as const,
   health: ["health"] as const,
 }
 
@@ -45,6 +55,29 @@ export function useTasks() {
       return signal.aborted ? tasks : reconcileTasks(qc, tasks)
     },
   })
+}
+
+export function useTimeBlocks() {
+  return useQuery({ queryKey: qk.timeBlocks, queryFn: () => api.get<TimeBlock[]>("/time-blocks") })
+}
+
+export function useReplaceTimeBlock() {
+  const qc = useQueryClient()
+  const mutationKey = ["replace-time-block"] as const
+  const pendingCount = useIsMutating({ mutationKey })
+  const mutation = useMutation({
+    mutationKey,
+    mutationFn: ({ id, input }: { id: string; input: TimeBlockInput }) =>
+      api.put<TimeBlock>(`/time-blocks/${id}`, input),
+    onSuccess: confirmed => {
+      qc.setQueryData<TimeBlock[]>(qk.timeBlocks, blocks =>
+        blocks?.map(block => block.id === confirmed.id ? confirmed : block),
+      )
+    },
+    onError: () => toast.error("Couldn't update time block"),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.timeBlocks }),
+  })
+  return { ...mutation, isPending: pendingCount > 0 }
 }
 
 export function useLists() {
@@ -157,6 +190,7 @@ export function useDeleteTask() {
     onSettled: (_data, _error, _input, ctx) => Promise.all([
       settleTaskChange(qc, ctx?.change),
       invalidateTelemetry(qc),
+      qc.invalidateQueries({ queryKey: qk.timeBlocks }),
     ]),
   })
 }
@@ -269,7 +303,11 @@ export function useDataExport() {
   return useFileDownload(createDataExport)
 }
 
-function useFileDownload(create: () => Promise<FileDownloadResult>) {
+export function useCalendarExport() {
+  return useFileDownload(createCalendarExport)
+}
+
+function useFileDownload<T = void>(create: (input: T) => Promise<FileDownloadResult>) {
   const active = useRef(false)
   const download = useRef<{ kind: "none" } | { kind: "active"; release: () => void }>({ kind: "none" })
   useEffect(() => {
@@ -281,8 +319,8 @@ function useFileDownload(create: () => Promise<FileDownloadResult>) {
     }
   }, [])
   return useMutation({
-    mutationFn: async () => {
-      const result = await create()
+    mutationFn: async (input: T) => {
+      const result = await create(input)
       if (result.kind !== "download") return result
       if (!active.current) return { kind: "left-view" } as const
       const release = startBrowserDownload(result.blob, result.filename)
@@ -466,6 +504,7 @@ export function useDeleteList() {
     },
     onSettled: (_data, _error, _id, ctx) => Promise.all([
       qc.invalidateQueries({ queryKey: qk.lists }),
+      qc.invalidateQueries({ queryKey: qk.timeBlocks }),
       settleTaskChange(qc, ctx?.change),
     ]),
   })
@@ -669,3 +708,110 @@ export function useAIUsage(days: number, enabled: boolean) {
     enabled,
   })
 }
+
+// Calendar control data never shares the canonical tasks cache
+export const calendarKey = ["calendar-connections"] as const
+const calendarMutationKey = ["calendar-control"] as const
+export function useCalendarConnections() {
+  return useQuery({ queryKey: calendarKey, queryFn: () => api.get<CalendarConnection[]>("/calendar/connections") })
+}
+export function useCalendarStatus(id: string) {
+  return useQuery({ queryKey: [...calendarKey, id, "status"], queryFn: () => api.get<CalendarSyncStatus>(`/calendar/connections/${id}/status`), refetchInterval: 10_000 })
+}
+export function useCalendarLinks(id: string) {
+  return useQuery({ queryKey: [...calendarKey, id, "links"], queryFn: () => api.get<CalendarLinkView[]>(`/calendar/connections/${id}/links`), refetchInterval: 10_000 })
+}
+export function useCalendarControl() {
+  const qc = useQueryClient()
+  const pending = useIsMutating({ mutationKey: calendarMutationKey })
+  const mutation = useMutation({
+    mutationKey: calendarMutationKey,
+    mutationFn: ({ path, method = "post", body = {} }: { path: string; method?: "post" | "patch"; body?: Record<string, unknown> }) => api[method](`/calendar/connections${path}`, body),
+    onSettled: () => qc.invalidateQueries({ queryKey: calendarKey }),
+  })
+  return { ...mutation, isPending: pending > 0 }
+}
+
+export function useCalendarAllLinks() {
+  return useQuery({
+    queryKey: [...calendarKey, "all-links"],
+    queryFn: async () => {
+      const connections = await api.get<CalendarConnection[]>("/calendar/connections")
+      return (await Promise.all(connections.map(connection =>
+        api.get<CalendarLinkView[]>(`/calendar/connections/${connection.id}/links`),
+      ))).flat()
+    },
+    refetchInterval: 10_000,
+  })
+}
+
+export function useCalendarSetupPending() {
+  return useSyncExternalStore(subscribeCalendarSetup, calendarSetupPending)
+}
+
+// Imported calendars have their own cache; uploads never change task telemetry
+export const calendarImportsKey = ["calendar-imports"] as const
+const calendarImportMutationKey = ["calendar-import-operation"] as const
+
+export function useImportedCalendars() {
+  return useQuery({
+    queryKey: calendarImportsKey,
+    queryFn: () => api.get<ImportedCalendarSource[]>("/calendar/imports"),
+  })
+}
+
+export function useImportedCalendarEvents(target: CalendarImportTarget) {
+  return useQuery({
+    queryKey: [...calendarImportsKey, "events", target.kind === "existing" ? target.source_id : { kind: "new" }],
+    enabled: target.kind === "existing",
+    queryFn: () => {
+      if (target.kind !== "existing") throw new Error("Choose an imported calendar first")
+      return api.get<ImportedCalendarEvent[]>(`/calendar/imports/${encodeURIComponent(target.source_id)}/events`)
+    },
+  })
+}
+
+export function useCalendarImportPending() {
+  return useIsMutating({ mutationKey: calendarImportMutationKey }) > 0
+}
+
+export function useImportCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationKey: calendarImportMutationKey,
+    mutationFn: async ({ target, file }: { target: CalendarImportTarget; file: File }) => {
+      let content: string
+      try {
+        content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer())
+      } catch {
+        throw new Error("Could not read this file as UTF-8. Choose a UTF-8 iCalendar file and retry.")
+      }
+      return api.post<CalendarImportResult>("/calendar/imports", { target, content })
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: calendarImportsKey }),
+  })
+}
+
+export function useRemoveImportedCalendar() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationKey: calendarImportMutationKey,
+    mutationFn: (sourceId: string) => api.delete<void>(`/calendar/imports/${encodeURIComponent(sourceId)}`),
+    onSettled: () => qc.invalidateQueries({ queryKey: calendarImportsKey }),
+  })
+}
+
+export type OverlaySelection = { kind: "none" } | { kind: "source"; id: string }
+
+export function useImportedCalendarOverlay(selection: OverlaySelection) {
+  return useQuery({
+    queryKey: ["calendar-imports", "overlay", selection],
+    enabled: selection.kind === "source",
+    queryFn: () => {
+      if (selection.kind !== "source") throw new Error("Choose an imported calendar first")
+      return api.get<ImportedOverlay>(`/calendar/imports/${encodeURIComponent(selection.id)}/overlay`)
+    },
+  })
+}
+
+export { webhooksKey, useWebhooks, useWebhookDeliveries, useWebhookAction } from "./webhooks"

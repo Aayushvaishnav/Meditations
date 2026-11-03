@@ -96,11 +96,16 @@ ignore unknown collections and fields. Migration v7 preserves all existing timed
 values and marks their zone `UTC`; it infers neither original local zones nor
 all-day intent.
 
-The UI calendar still edits deadlines; work-block UI and calendar export remain
-later backlog items. Future calendar recurrence must keep the anchor's local clock
+The UI calendar displays deadlines and separate timed/all-day work blocks. Block
+rescheduling changes only the selected block, preserves displayed browser-local
+start time and elapsed duration (or all-day date span), and keeps saved timezone
+metadata. Nonexistent displayed target times are rejected; repeated times select
+the earlier occurrence. The day dialog offers a date-input alternative to drag.
+Block creation/deletion and time/zone editing remain API-only. Calendar offers
+selected-block .ics snapshots, described below. Future calendar recurrence must keep the anchor's local clock
 in its stored IANA zone and resolve each date separately, with explicit resolution
-of gaps/folds, instead of adding fixed UTC days. Recurrence expansion and occurrence
-exceptions remain SCHED-04; existing completion-triggered task recurrence is unchanged.
+of gaps/folds, instead of adding fixed UTC days (SCHED-03). SCHED-04 defines the
+ownership boundary below, not series or exception storage.
 
 ## Scoring (plan §3.4)
 
@@ -336,7 +341,7 @@ no import endpoint. Regression tests use in-memory fixtures except the isolated
 ## Schema upgrades and recurring tasks
 
 Schema upgrades run automatically before the API starts. Fresh and existing
-unversioned databases reach schema v7 through the same versioned migrations.
+unversioned databases reach schema v13 through the same versioned migrations.
 Version 3 tracks pending and ready search vectors for recovery after offline
 embedding or extension failures. Version 5 adds date-only task deadlines without
 rewriting legacy due instants; a CHECK prevents conflicting date/timed values.
@@ -399,12 +404,48 @@ The upgrade treats each existing recurring row as a separate series because
 older databases did not record lineage. It preserves the rows instead of
 attempting to merge similar tasks or repair past duplicate/missing occurrences.
 Deleting a successor permits regeneration if its predecessor is later reopened
-and completed again. Supported rules remain DAILY/WEEKLY, INTERVAL, and BYDAY.
+and completed again.
+
+New explicit task-rule writes accept only `FREQ=DAILY` or `FREQ=WEEKLY`, positive
+integer `INTERVAL` within RFC 5545's signed 32-bit range, and unnumbered `BYDAY`
+only for weekly rules. A successor outside the supported date range returns 422
+without completing the task. Parsing tolerates case, whitespace, and an optional
+`RRULE:` prefix; no silent clamping or field
+filtering occurs. Unknown, duplicate, malformed, or unsupported fields return 422.
+Existing invalid stored rules remain readable and portable-exportable unchanged;
+unrelated edits are allowed, but completion requires clearing or replacing the
+rule (otherwise 422). No migration is introduced. Weekly intervals use
+Monday-based weeks; task UTC/date arithmetic remains unchanged.
+
+### Task/calendar recurrence boundary (SCHED-04)
+
+`app/recurring_tasks.py` owns completion-triggered task successors;
+`app/recurrence.py` owns task-rule arithmetic. Calendar `VEVENT` recurrence belongs
+to a separate domain. Current local blocks are nonrecurring and reject calendar
+recurrence inputs. ICS-02 retains external series opaquely; occurrence expansion
+remains deferred. Selected-block CalDAV publication, individual-block ICS snapshot
+export and read-only file import are implemented separately below. SCHED-04
+itself required no migration.
+
+- Snapshot export derives each individual block's stable `VEVENT` UID from its
+  stable local ID. Never export a task RRULE as a `VEVENT` RRULE; event
+  attendance/status must never trigger task successor clones.
+- Future external identity is collection/source + UID + original typed
+  `RECURRENCE-ID`: DATE, local date-time with TZID, or UTC date-time. A series
+  master uses an explicit master marker. Moved occurrences retain the original
+  identity rather than their new start time; never match by title or date.
+  Floating date-times and `RANGE=THISANDFUTURE` require dedicated support; until
+  then retain the whole resource as opaque/read-only or reject it atomically.
+- Preserve overrides, cancellation tombstones, and `EXDATE`/`RDATE` values.
+  Unsupported raw provider rules stay opaque/read-only or are rejected atomically,
+  never converted to task rules or partially expanded.
+- Future wall-clock recurrence follows SCHED-03's zone and explicit gap/fold
+  resolution contract; task UTC/date semantics are unchanged.
 
 ## Known limitations / deferred
 
 - Timezone-aware scheduling (store local + convert) is deferred until the frontend lands; naive-UTC is the interim contract.
-- Recurrence supports DAILY/WEEKLY rules only; unsupported rules are stored without generating successors.
+- Task recurrence supports the strict DAILY/WEEKLY subset above; calendar recurrence remains deferred.
 - Journal routes (TipTap content, mood/energy) are Phase 3; the tables already exist.
 - `daily_scores`/`weekly_summaries`/`monthly_summaries` are written by the Phase 4 agents; scoring is live-computed until then.
 
@@ -432,3 +473,262 @@ existing completion-derived timed successor behavior. Capture without a time
 creates a date-only deadline; explicit times retain server-local interpretation.
 Export format v1 adds nullable `tasks.deadline_date` compatibly; credentials remain
 excluded and calendar labels are exported unchanged.
+
+
+## iCalendar snapshot export
+
+In Calendar, expand **Export work blocks**, select blocks, and choose **Download
+.ics**. Candidates overlap the displayed month and follow current filters. Each
+selected block exports its whole interval; deadlines remain separate. Selection
+starts empty and resets on month/filter changes. Finish saving edits first.
+
+API clients can `POST /api/calendar/export` with `{"block_ids":["BLOCK_ID"]}`.
+The request allows only a nonempty list of nonempty string IDs; duplicates collapse
+and events sort by ID. A missing ID returns 404 without a partial file. The
+UTF-8 attachment `meditations-calendar.ics` contains independent VEVENTs:
+
+- UTC timed instants, with source zone metadata in `X-JOURNAL-TIMEZONE`; receiving
+  clients display times in their chosen timezone. All-day DATE values retain
+  their exclusive end without conversion.
+- Stable UUID5-derived UIDs from block IDs, including across moves, task renames,
+  and backup/restore. Task title is SUMMARY; canceled owners map to CANCELLED,
+  all others to CONFIRMED. LAST-MODIFIED includes task and block updates.
+- Task recurrence stays completion-triggered. There is no event RRULE, recurrence
+  expansion, or automatic deadline export. Descriptions, journals, credentials,
+  tags, and focus history are excluded.
+- RFC TEXT escaping and UTF-8-safe 75-octet folding use CRLF. Fractional seconds
+  truncate; intervals collapsing at second precision and forbidden TEXT control
+  characters return 422 for the entire request. Source data stays unchanged.
+
+The file is unencrypted and includes selected task titles. Export is a snapshot,
+instead of live synchronization. Open/import it in a calendar client; reimport
+and update behavior varies, so repeated imports may create duplicates. Later
+block edits/deletions do not update earlier imports. Subscriptions and calendar
+series expansion remain deferred; read-only ICS file imports and outbound CalDAV
+are separate features.
+
+
+## CalDAV connections
+
+For setup, optional user-managed Radicale, and Settings controls, see the
+[user calendar synchronization guide](../docs/calendar-sync.md).
+
+Calendar connections can be configured in **Settings → Calendar synchronization**
+or through the API below. The backend queue captures changes to explicitly opted-in
+blocks and drains only verified, enabled destinations. Journal does not install or start
+a server. Use an existing server, optionally a user-managed Radicale instance;
+Nextcloud and Baïkal compatibility is not yet verified.
+
+1. `POST /api/calendar/connections` with `server_url` and `calendar_url` to save
+   a disabled draft. URLs must share an origin, omit embedded credentials,
+   query strings and fragments, and the calendar URL must end in `/`.
+2. `POST /api/calendar/connections/{id}/discover` with `username`, `password`, and
+   explicit `auth_type` (`basic` or `digest`). This returns calendar URLs, names,
+   writable flags and VEVENT support without saving credentials. A password can
+   be an app password supported by the server. Browser OAuth is outside scope.
+3. `POST /api/calendar/connections/{id}/connect` with those credentials and the
+   selected `calendar_url`. Journal rediscovers the destination and accepts only
+   a writable event calendar. A dedicated **Meditations** calendar is recommended.
+   Password operations require HTTPS or loopback HTTP, such as local Radicale.
+4. After a backend restart, `POST /api/calendar/connections/{id}/verify` to use
+   stored credentials. Startup disables activity and requires explicit verification
+   without opening your vault or contacting the server. Submit `/connect` again
+   to replace credentials, including after password changes.
+5. `POST /api/calendar/connections/{id}/disconnect` to disable activity, detach
+   mappings and remove OS credentials. Remote events remain unchanged. If the
+   vault is locked or removal fails, unlock it and retry disconnect. Pending
+   cleanup must finish before reconnecting. DELETE on `/{id}` removes only an
+   unused disconnected draft without credentials or resource links.
+
+GET `/api/calendar/connections` lists metadata; GET `/{id}/links` lists retained
+mappings. Responses never return credentials. A successful connection remains
+disabled for synchronization and does not select any local blocks for export.
+Ordinary task CRUD works without a configured or reachable calendar server.
+
+### Credential storage and recovery
+
+CalDAV username/password/authentication type are held together in the OS vault,
+instead of SQLite or ordinary settings. Linux requires an available Secret
+Service provider; macOS uses Keychain and Windows uses Credential Manager.
+KWallet must expose a compatible Secret Service interface to work with this
+backend. Unavailable vaults fail explicitly instead of falling back to files.
+
+Credential records are scoped to the canonical database path and connection ID.
+Moving a database to another path or machine requires entering credentials again;
+clean up old records from the original path or with your OS vault tools. Backups
+and checkpoints contain connection metadata, instead of OS-vault credentials;
+portable exports exclude integration metadata entirely. Restoring a database
+requires verification before reconnecting. Interrupted credential writes/removal
+leave explicit `removal_pending` metadata: retry disconnect before connecting.
+
+The CalDAV adapter supports discovery and ETag-conditional resource operations;
+the separate inspection worker is read-only and runs as part of the lifecycle
+queue. Connecting never overwrites linked remote changes. Transactional
+edit/deletion capture and scheduling are implemented; explicit synchronization
+controls are described below.
+
+### Outbound dispatch service (CAL-04)
+
+Backend integrations can explicitly invoke `OutboundService(sessions, manager)`
+from `app.calendar_sync.outbound`; use the application-scoped connection manager
+so writes serialize with disconnect and credential changes. `prepare(link_id)`
+freezes a revision, `dispatch(link_id)` writes or reconciles it, and
+`detach(link_id)` leaves the remote event unchanged. This service consumes
+existing link intent; it does not opt in blocks. Database triggers capture source
+edits independently of this service.
+The connection must be verified, enabled, and have stored credentials.
+
+Schema v10 preserves each dispatch separately from newer local edits. The
+serialized event, random ownership marker, resource URL, revision, expected ETag,
+and attempted flag survive interruption. Retries inspect the same resource and
+use conditional requests. A matching UID alone never establishes ownership.
+Conflicts return a link in `conflict` state; callers must inspect that state
+instead of treating every nonexceptional return as remote success. Authentication
+and operational failures raise fixed-message `OutboundFailure` exceptions after
+retaining intent. Local preparation errors can be repaired and retried.
+
+Remote recurrence, invitations, unknown properties, changed versions, and
+unowned resources block writes. Recovery of an uncertain successful upsert
+requires identical validated properties, including the dispatch marker. Only
+line folding and property order within each component are ignored; values,
+parameters, whitespace, and component membership remain exact. Other server
+rewrites can still require explicit detachment instead of automatic recovery.
+Detachment preserves unresolved dispatch evidence and blocks further writes.
+Real-HTTP interoperability checks target Radicale 3.9.0 only; see the
+[verification scope](../docs/calendar-sync.md#verification-scope). Restarts still require
+explicit verification and enablement before any dispatch; the lifecycle worker
+remains idle for disabled destinations.
+
+Tests use fake vaults and mocked HTTP, without real accounts or user databases.
+See `plan.md` §6.4 for the complete lifecycle contract.
+
+### Durable offline queue (CAL-05)
+
+Changes to linked blocks and event-visible task fields are captured transactionally
+in schema v11, including block/task/subtask deletion. Unlinked blocks remain local.
+Task completion does not cancel appointments; only task cancellation changes event
+status. Ordinary deadlines, descriptions, focus history, and scores stay independent.
+Missing or altered required capture triggers cause offline restore validation to fail.
+
+The backend worker retries eligible queued work and inspects acknowledged events
+at startup and every 30 seconds after the previous pass finishes. Network or vault
+failures retain intent; authentication failures require explicit verification and
+enablement. Startup/restore always disables activity first. Setup alone cannot
+start publishing events: opt in individual blocks and explicitly enable synchronization.
+A local save confirms SQLite persistence, instead of remote synchronization.
+
+Retries reconcile the same immutable resource before writing. Newer edits wait
+behind uncertain writes, and changed/missing remote resources become conflicts
+instead of being overwritten. A create deleted before any remote attempt needs
+no remote cleanup; an uncertain create is reconciled before its queued deletion.
+Disconnect leaves remote events unchanged. Closing the app stops the worker;
+server availability and other clients are independent of the app lifecycle.
+Settings exposes pause/resume and manual Sync now. Real-HTTP Radicale 3.9.0
+checks and packaged discovery against a local test server are covered in the
+[calendar guide](../docs/calendar-sync.md#developer-verification); native vault
+and full desktop verification remain outstanding. Fixed-interval retries have no exponential backoff or
+OS network-change listener.
+
+### Settings and explicit publication (CAL-06)
+
+Open **Settings → Calendar synchronization** to discover and select a writable
+event calendar, connect, verify after restart, or replace credentials. Prefer a
+dedicated **Meditations** calendar. Local-only use requires no account or server.
+Setup and verification leave synchronization paused and every block unselected.
+
+Select an individual task-linked block and choose **Publish selected block**,
+then **Enable sync**. Blocks publish their whole interval, independently of task
+deadlines, completion, focus history, and calendar display filters. **Sync now**
+requests one connection-scoped pass; inspect queued changes, conflicts, and errors
+instead of interpreting a completed request as proof that every event synced.
+The periodic worker also processes eligible work while the app is running.
+
+Additional routes under `/api/calendar/connections/{id}`:
+
+| Method and suffix | Operation |
+|---|---|
+| `PATCH /sync` | `{ "enabled": true }` enables a verified connection; `false` pauses it |
+| `GET /status` | Connection, queued/conflict/error/detached counts, last-success timestamp/state |
+| `POST /sync-now` | Drain one finite pass for this enabled connection |
+| `POST /blocks/{block_id}/opt-in` | Select one block explicitly |
+| `POST /blocks/{block_id}/opt-out` | Queue removal of its linked event, preserving local data |
+| `POST /links/{link_id}/detach` | Keep the remote event and stop synchronization |
+
+**Remove remote event** queues conditional deletion; it can remain pending offline.
+A newer explicit opt-in retains the same resource URL/UID and reconciles uncertain
+older requests first. **Stop syncing; keep remote** resolves a conflict through
+explicit detachment. Detached/disconnected mappings cannot silently resume.
+**Disconnect** stops activity and removes local OS credentials, leaving remote
+events unchanged. For credential removal failures, unlock the vault and retry.
+Remote cleanup should be completed with opt-out before disconnecting if desired.
+
+Schema v12 stores explicit selection intent and real acknowledgment timestamps.
+`last_success_state` is `observed` with `last_success_at`, `unknown` for legacy
+acknowledgments lacking a recorded time, or `never` before any known remote sync.
+Local edits and conflicts do not change the recorded acknowledgment time.
+Backups/checkpoints/offline recovery retain the fields; portable exports omit
+integration metadata. Neither database migrations nor opening Settings contacts
+the server or vault automatically. The server is user-managed and must be reachable;
+other devices cannot access a localhost-only server. Real-HTTP integration checks target Radicale 3.9.0, including discovery,
+authentication, writes, conflicts, response loss, offline/restart behavior, DST,
+and all-day dates. Packaged discovery is checked against a local server only.
+Native vault and full desktop operation remain unverified. Nextcloud and Baïkal
+are unverified; no support claim is made for them. See the
+[calendar guide](../docs/calendar-sync.md) for setup and verification commands.
+
+
+## Read-only iCalendar file imports
+
+Settings provides explicit new/existing destinations, upload feedback, a source-value
+inventory, and confirmed removal. `app/calendar_import/` parses with `icalendar`
+and persists independently of tasks, work blocks, focus, scoring and outbound sync.
+Schema v13 adds sources, retained upload snapshots and opaque event identities.
+Imports do not expand occurrences. Calendar optionally projects standalone
+appointments through a read-only overlay.
+
+`POST /api/calendar/imports` accepts `{target: {kind: "new", name: "Personal"},
+content: "..."}` or `{target: {kind: "existing", source_id: "..."}, content: "..."}`.
+Within a source, UID plus original typed recurrence ID/TZID identifies a record;
+a master has an explicit identity. Latest explicit import wins, absent identities
+remain, and duplicate incoming identities reject the whole file. Original text
+retains timezone definitions, properties, recurrence and exception semantics.
+Unsupported components and detected malformed data fail atomically before writes.
+Stored source times remain labeled opaque strings. The separate overlay projection
+resolves supported standalone intervals without changing stored imports.
+
+GET on the prefix lists destinations; `/{source_id}/events` reads inventory and
+`/{source_id}/snapshots` returns original text/history. `/{source_id}/overlay`
+returns explicit date/timed/floating standalone intervals and unplaced reasons
+for recurrence, cancellations, durations or unsafe clock values. Named timezone
+resolution uses each event's retained snapshot context, with embedded VTIMEZONE
+definitions taking precedence over IANA registry zones. Definitions cannot leak
+between sources or historical snapshots. Output timed instants are UTC Z strings.
+The endpoint never writes sources or local task data.
+DELETE `/{source_id}`
+cascades imported content only. Backups/offline restore include all imported
+content; portable export deliberately excludes these tables. Source deletion is
+the retention control. See [calendar import guide](../docs/calendar-import.md).
+
+Packaged import verification can be run after building the sidecar:
+
+```bash
+uv run python scripts/smoke_sidecar.py /path/to/meditations-backend --calendar-import
+```
+
+This uses a disposable database and local API only; the import check retains a
+BOM-prefixed recurring event and its original text without expanding occurrences.
+It does not access a native credential store or any user calendar server.
+
+## Optional outgoing webhooks
+
+`app/webhooks/` owns versioned transactional automation events and the durable
+per-endpoint delivery worker. `/api/webhooks` configures event/list scopes,
+optional title sharing, endpoint enablement, synthetic tests, status, and retry.
+The four subscriptions cover time-block create/update/delete and task completion.
+The worker runs with the backend and retains offline work in SQLite; local saves
+never depend on a reachable receiver. Endpoint secrets use the OS credential-store
+interface with a separate webhook namespace. SQLite backups include configuration
+and outbox payloads, while portable data exports exclude them.
+
+See [the event/signature contract and local workflow example](../docs/webhooks.md).
+HTTP acknowledgement is separate from successful downstream calendar updates.

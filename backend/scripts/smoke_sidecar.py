@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ipaddress
 import os
 from pathlib import Path
 import queue
@@ -15,13 +16,70 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 
 class SmokeError(RuntimeError):
     pass
 
 
-def smoke(binary: Path, startup_timeout: float = 60.0) -> None:
+def _local_calendar_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        local = host == "localhost" or (host is not None and ipaddress.ip_address(host).is_loopback)
+        if (not local or parsed.scheme not in {"http", "https"}
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or parsed.port == 0
+                or any(ord(char) <= 32 or ord(char) == 127 for char in value)
+                or "\\" in value):
+            raise ValueError
+    except ValueError as error:
+        raise SmokeError("calendar server URL must be an HTTP(S) loopback URL without credentials, query, or fragment") from error
+    return value.rstrip("/") + "/"
+
+
+def _smoke_calendar(request, require, server_url: str) -> None:
+    calendar_url = server_url + "journal/meditations/"
+    draft = request("POST", "/api/calendar/connections", 201,
+                    {"server_url": server_url, "calendar_url": calendar_url})
+    path = "/api/calendar/connections/" + draft["id"]
+    try:
+        auth = {"username": "journal", "password": "journal-test-password", "auth_type": "basic"}
+        calendars = request("POST", path + "/discover", 200, auth)
+        require(any(calendar.get("url") == calendar_url
+                    and calendar.get("writable") is True
+                    and calendar.get("supports_vevent") is True for calendar in calendars),
+                "selected writable VEVENT calendar was not discovered")
+        request("POST", path + "/discover", 401, {**auth, "password": "invalid-test-password"})
+    finally:
+        request("DELETE", path, 204)
+
+
+
+def _smoke_calendar_import(request, require) -> None:
+    content = ('\ufeffBEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n'
+               'UID:packaged-import\r\nDTSTART;TZID=America/New_York:20260101T120000\r\n'
+               'RRULE:FREQ=DAILY;COUNT=1000000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n')
+    result = request('POST', '/api/calendar/imports', 200,
+                     {'target': {'kind': 'new', 'name': 'Packaged import'}, 'content': content})
+    path = '/api/calendar/imports/' + result['source_id']
+    try:
+        require(result['created'] == 1, 'opaque calendar import did not create one component')
+        events = request('GET', path + '/events', 200)
+        require(len(events) == 1 and events[0]['start_kind'] == 'local'
+                and events[0]['time_zone'] == 'America/New_York'
+                and events[0]['representation'] == 'opaque', 'opaque calendar inventory mismatch')
+        snapshots = request('GET', path + '/snapshots', 200)
+        require(len(snapshots) == 1 and snapshots[0]['content'] == content,
+                'original calendar snapshot mismatch')
+    finally:
+        request('DELETE', path, 204)
+
+def smoke(binary: Path, startup_timeout: float = 60.0,
+          calendar_server_url: str | None = None, calendar_import: bool = False) -> None:
+    if calendar_server_url is not None:
+        calendar_server_url = _local_calendar_url(calendar_server_url)
     binary = binary.resolve(strict=True)
     logs: list[str] = []
     with tempfile.TemporaryDirectory(prefix="sidecar-smoke-") as temporary:
@@ -114,6 +172,10 @@ def smoke(binary: Path, startup_timeout: float = 60.0) -> None:
             request("GET", task_path, 404)
             request("DELETE", list_path, 204)
             request("GET", list_path, 404)
+            if calendar_server_url is not None:
+                _smoke_calendar(request, require, calendar_server_url)
+            if calendar_import:
+                _smoke_calendar_import(request, require)
             # Even empty journal text reaches optional embeddings; omit journal writes.
             require(db.is_file() and db.stat().st_size > 0, "isolated database was not created")
             require(process.poll() is None, "backend exited during smoke checks")
@@ -138,11 +200,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=60.0)
+    parser.add_argument("--calendar-server-url", help="disposable loopback CalDAV test server only")
+    parser.add_argument('--calendar-import', action='store_true', help='exercise opaque local calendar imports')
     args = parser.parse_args()
     if args.startup_timeout <= 0:
         parser.error("--startup-timeout must be positive")
     try:
-        smoke(args.binary, args.startup_timeout)
+        smoke(args.binary, args.startup_timeout, args.calendar_server_url, args.calendar_import)
     except (OSError, SmokeError) as error:
         print(error, file=sys.stderr)
         return 1

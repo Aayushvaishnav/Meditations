@@ -9,6 +9,9 @@ import { SettingsView } from "./settings"
 vi.mock("@/api/client", () => ({ api: { get: vi.fn(), put: vi.fn(), delete: vi.fn() }, ApiError: class extends Error {} }))
 vi.mock("@/components/backup-settings", () => ({ BackupSettings: () => null }))
 vi.mock("@/components/export-settings", () => ({ ExportSettings: () => null }))
+vi.mock("@/components/calendar-settings", () => ({ CalendarSettings: () => null }))
+vi.mock("@/components/webhook-settings", () => ({ WebhookSettings: () => null }))
+vi.mock("@/components/calendar-import-settings", () => ({ CalendarImportSettings: () => null }))
 
 const initial: AISettingsView = { provider: "anthropic", model_name: "initial", fast_model_name: "fast", base_url: "https://initial.test", api_key_set: true }
 const defaults = { ...initial, provider: "openai_compatible", model_name: "default", base_url: null }

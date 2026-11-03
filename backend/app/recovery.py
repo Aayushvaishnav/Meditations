@@ -95,6 +95,10 @@ def _contract(execute) -> dict[str, tuple]:
                     f'PRAGMA index_xinfo("{index_name}")'
                 ).fetchall()), index[4]))
         result[name] = (columns, foreign_keys, sorted(unique))
+    for name, table, sql in execute(
+        "SELECT name, tbl_name, sql FROM sqlite_master WHERE type='trigger'"
+    ).fetchall():
+        result[f"trigger {name}"] = (table, sql)
     return result
 
 
@@ -113,7 +117,8 @@ async def _prepare(stage: Path) -> None:
             expected = await conn.run_sync(lambda sync: _contract(sync.exec_driver_sql))
         for table, columns in expected.items():
             if actual.get(table) != columns:
-                raise RecoveryError(f"Missing or incompatible schema for table {table}")
+                kind = "" if table.startswith("trigger ") else "table "
+                raise RecoveryError(f"Missing or incompatible schema for {kind}{table}")
     finally:
         await reference.dispose()
     engine = create_async_engine("sqlite+aiosqlite:///" + str(stage.resolve()))

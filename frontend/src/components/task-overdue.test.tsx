@@ -8,6 +8,11 @@ import { KanbanBoard } from "./kanban-board"
 import { CalendarView } from "./calendar-view"
 
 vi.mock("@/hooks/api", () => ({
+  useImportedCalendars: () => ({ data: [], isSuccess: true }),
+  useImportedCalendarOverlay: () => ({ data: undefined }),
+  useCalendarExport: () => ({ mutate: vi.fn(), isPending: false, isSuccess: false, isError: false }),
+  useTimeBlocks: () => ({ data: [], isPending: false, isError: false }),
+  useReplaceTimeBlock: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateTask: () => ({ mutate: vi.fn() }),
   useCreateTask: () => ({ mutate: vi.fn() }),
   useDeleteTask: () => ({ mutate: vi.fn() }),

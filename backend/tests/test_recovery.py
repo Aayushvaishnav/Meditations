@@ -63,6 +63,7 @@ def test_rejects_backup_without_changing_destination(tmp_path, damage):
             elif damage == "missing_table":
                 conn.execute("DROP TABLE review_jobs")
             elif damage == "missing_column":
+                conn.execute("DROP TRIGGER calendar_queue_task_update")
                 conn.execute("ALTER TABLE tasks DROP COLUMN title")
             elif damage == "unrelated":
                 for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
@@ -232,3 +233,23 @@ def test_missing_search_indexes_rebuilt_after_restore(tmp_path, monkeypatch):
         finally:
             await engine.dispose()
     asyncio.run(rebuild())
+
+
+@pytest.mark.parametrize('trigger', [
+    'calendar_queue_block_update', 'calendar_queue_task_update', 'calendar_queue_block_delete',
+])
+@pytest.mark.parametrize('damage', ['missing', 'changed'])
+def test_restore_rejects_missing_or_changed_capture_trigger(tmp_path, trigger, damage):
+    backup = database(tmp_path / 'backup.db')
+    target = database(tmp_path / 'current.db', label='current')
+    with sqlite3.connect(backup) as conn:
+        sql = conn.execute('SELECT sql FROM sqlite_master WHERE name=?', (trigger,)).fetchone()[0]
+        conn.execute(f'DROP TRIGGER {trigger}')
+        if damage == 'changed':
+            conn.execute(sql.replace('local_revision + 1', 'local_revision + 2'))
+    original_backup, original_target = backup.read_bytes(), target.read_bytes()
+    with pytest.raises(RecoveryError, match=f'incompatible schema for trigger {trigger}'):
+        asyncio.run(restore_database(backup, target))
+    assert target.read_bytes() == original_target
+    assert backup.read_bytes() == original_backup
+    assert not list(tmp_path.glob('.restore-*'))
