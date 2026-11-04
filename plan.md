@@ -416,7 +416,39 @@ uses the canonical tasks cache and its concurrent optimistic replay/rollback
 contract; temporary creations carry explicit defaults. Portable task JSON exports
 include both fields. SQLite backups preserve them; older restored databases gain
 `unassigned` values through v16. Portable JSON remains export-only; ICS import and
-work-block export do not assign classification. Matrix UI remains pending MAT-02.
+work-block export do not assign classification. The Matrix UI uses this contract as
+described below.
+
+#### Eisenhower matrix (features/MAT-02)
+
+Matrix is a persisted task view beside List, Board and Calendar, available from
+both the header and command menu. `lib/eisenhower.ts` owns pure classification
+mapping and deterministic ordering. It reuses the shared scope/title/tag selector:
+active scopes exclude completed/canceled tasks; Completed shows completed tasks;
+list scopes keep their selected list. Matching subtasks appear independently once,
+with parent context, instead of being recursively repeated beneath parents.
+
+The desktop grid orders Urgent & important, Not urgent & important, Urgent & not
+important, then Not urgent & not important. Narrow windows use a labeled vertical
+stack. A separate Unclassified tray holds tasks with either dimension unassigned;
+partial states remain visible and can be completed independently or reset.
+
+Dedicated dnd-kit pointer handles and native Move to quadrant selectors submit
+both classification dimensions atomically through the existing task update hook.
+Moves do not change priority, deadlines, status, list membership or ordering. The
+canonical tasks cache provides optimistic placement, concurrent replay and scoped
+rollback. Move feedback is per task; different tasks settle independently, and a
+pending move blocks a second classification edit on that task. Keyboard focus
+returns after final placement or rollback unless the person moved to another
+control. Existing TaskItem menus/completion remain shared and visible on touch.
+
+Each zone has a task-creation form with explicit classification and the selected
+list where applicable; Unclassified creates both dimensions unassigned. Smart
+scopes do not invent deadlines or completed status, so a new task appears only
+when it matches the current scope/search. Failed creates retain their draft;
+success does not clear a different draft typed while the request was pending.
+Matrix shares the task query loading/error/retry boundary and adds empty,
+pending-move and failed-move feedback. No dependency or backend contract changed.
 
 #### Calendar, date, and timer contracts (QA-04)
 

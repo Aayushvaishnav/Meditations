@@ -5,6 +5,7 @@ import { Header } from "@/components/header"
 import { BriefingCard } from "@/components/briefing-card"
 import { CalendarView } from "@/components/calendar-view"
 import { CommandPalette } from "@/components/command-palette"
+import { EisenhowerMatrix } from "@/components/eisenhower-matrix"
 import { KanbanBoard } from "@/components/kanban-board"
 import { QuickAdd } from "@/components/quick-add"
 import { Sidebar } from "@/components/sidebar"
@@ -71,7 +72,7 @@ export default function App() {
               <Header />
               <QuickAdd />
               {view === "list" && !tasks.isError && scope.kind === "smart" && scope.id === "today" && <BriefingCard />}
-              <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+              <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
                 {tasks.isError ? (
                   <TasksErrorBanner onRetry={() => void tasks.refetch()} />
                 ) : tasks.isLoading ? (
@@ -82,6 +83,8 @@ export default function App() {
                   )
                 ) : view === "calendar" ? (
                   <CalendarView tasks={tasks.data ?? []} scope={scope} search={search} />
+                ) : view === "matrix" ? (
+                  <EisenhowerMatrix tasks={tasks.data ?? []} lists={lists.data ?? []} scope={scope} search={search} />
                 ) : view === "board" ? (
                   <KanbanBoard tasks={tasks.data ?? []} search={search} />
                 ) : (

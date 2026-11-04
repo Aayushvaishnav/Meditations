@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { Calendar, Command, List, Search, Columns3, X } from "lucide-react"
+import { Calendar, Command, List, Search, Columns3, Grid2X2, X } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useLists } from "@/hooks/api"
 import { Button } from "@/components/ui/button"
@@ -86,6 +86,7 @@ export function Header() {
             { id: "list", icon: List, label: "List view" },
             { id: "board", icon: Columns3, label: "Board view" },
             { id: "calendar", icon: Calendar, label: "Calendar view" },
+            { id: "matrix", icon: Grid2X2, label: "Matrix view" },
           ] as const
         ).map(({ id, icon: Icon, label }) => (
           <button
@@ -100,7 +101,7 @@ export function Header() {
             )}
           >
             <Icon className="size-3.5" />
-            {id === "list" ? "List" : id === "board" ? "Board" : "Calendar"}
+            {id === "list" ? "List" : id === "board" ? "Board" : id === "calendar" ? "Calendar" : "Matrix"}
           </button>
         ))}
       </div>
