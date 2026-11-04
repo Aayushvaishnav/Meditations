@@ -5,7 +5,7 @@ import { useImportedCalendars, useImportedCalendarOverlay, type OverlaySelection
 import { Button } from "./ui/button"
 import { importedEventLabel } from "@/lib/calendar-overlay"
 
-export function CalendarImportedOverlay({ children }: { children: (items: ImportedOverlayItem[]) => ReactNode }) {
+export function CalendarImportedOverlay({ children, inlineControls = true }: { inlineControls?: boolean; children: (items: ImportedOverlayItem[], controls: ReactNode, summary: string) => ReactNode }) {
   const id = useId()
   const sources = useImportedCalendars()
   const [selection, setSelection] = useState<OverlaySelection>({ kind: "none" })
@@ -13,8 +13,7 @@ export function CalendarImportedOverlay({ children }: { children: (items: Import
   const effective: OverlaySelection = selected ? { kind: "source", id: selected.id } : { kind: "none" }
   const overlay = useImportedCalendarOverlay(effective)
   const items = selected && !sources.isError && !overlay.isError ? overlay.data?.items ?? [] : []
-  return <>
-    <section aria-label="Imported calendar overlay" className="mb-4 space-y-2 border-b border-border pb-4">
+  const controls = <section aria-label="Imported calendar overlay" className="mb-4 space-y-2 border-b border-border pb-4">
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor={id} className="text-sm font-medium">Imported calendar</label>
         <select id={id} value={selected?.id ?? ""} onChange={event => setSelection(event.target.value ? { kind: "source", id: event.target.value } : { kind: "none" })}
@@ -39,8 +38,8 @@ export function CalendarImportedOverlay({ children }: { children: (items: Import
         </details>}
       </>}
     </section>
-    {children(items)}
-  </>
+  const summary = [selected ? `Imported: ${selected.name}` : "Imported hidden", sources.isError || (selected && overlay.isError) ? "error; open sources to retry" : ""].filter(Boolean).join(" · ")
+  return <>{inlineControls && controls}{children(items, controls, summary)}</>
 }
 
 export function ImportedEventChip({ event, onOpen }: { event: ImportedOverlayItem; onOpen: () => void }) {

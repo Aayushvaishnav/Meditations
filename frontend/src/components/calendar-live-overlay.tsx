@@ -10,7 +10,7 @@ import { parseUTC } from "@/lib/date-values"
 
 export type { LiveSelection } from "@/hooks/calendar-inbound"
 
-export function CalendarLiveOverlay({ children }: { children: (items: InboundOverlayItem[], unplacedCount: number) => ReactNode }) {
+export function CalendarLiveOverlay({ children, inlineControls = true }: { inlineControls?: boolean; children: (items: InboundOverlayItem[], unplacedCount: number, controls: ReactNode, summary: string) => ReactNode }) {
   const id = useId()
   const connections = useCalendarConnections()
   const connected = (connections.data ?? []).filter(connection => connection.state !== "disconnected")
@@ -21,8 +21,7 @@ export function CalendarLiveOverlay({ children }: { children: (items: InboundOve
   const unplacedCount = selected && !connections.isError && !overlay.isError ? overlay.data?.unplaced.length ?? 0 : 0
   const reconciliation = overlay.data?.reconciliation
   const stale = selected && (!selected.enabled || selected.state === "authentication_required" || reconciliation?.state === "error")
-  return <>
-    <section aria-label="Live calendar overlay" className="mb-4 space-y-2 border-b border-border pb-4">
+  const controls = <section aria-label="Live calendar overlay" className="mb-4 space-y-2 border-b border-border pb-4">
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor={id} className="text-sm font-medium">Live calendar</label>
         <select id={id} value={selected?.id ?? ""} onChange={event => setSelection(event.target.value ? { kind: "connection", id: event.target.value } : { kind: "none" })}
@@ -53,8 +52,8 @@ export function CalendarLiveOverlay({ children }: { children: (items: InboundOve
         </details>}
       </>}
     </section>
-    {children(items, unplacedCount)}
-  </>
+  const summary = [selected ? `Live: ${selected.calendar_url}` : "Live hidden", connections.isError || (selected && overlay.isError) ? "error; open sources to retry" : stale ? "stale appointments" : ""].filter(Boolean).join(" · ")
+  return <>{inlineControls && controls}{children(items, unplacedCount, controls, summary)}</>
 }
 
 export function LiveEventChip({ event, onOpen }: { event: InboundOverlayItem; onOpen: () => void }) {

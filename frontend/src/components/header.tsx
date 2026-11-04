@@ -47,9 +47,9 @@ export function Header() {
   }, [search, setSearch])
 
   return (
-    <div className="flex items-center gap-3 px-6 pt-5 pb-3">
+    <div className="flex flex-wrap items-center gap-2 px-3 pt-5 pb-3 sm:gap-3 sm:px-6">
       <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      <div className="relative ml-auto">
+      <div className="relative order-last ml-auto w-full min-w-0 basis-full sm:order-none sm:w-auto sm:basis-auto">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           ref={searchRef}
@@ -58,7 +58,7 @@ export function Header() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter tasks…  /"
-          className="h-8 w-52 bg-transparent pr-7 pl-8 text-sm"
+          className="h-8 w-full sm:w-52 bg-transparent pr-7 pl-8 text-sm"
         />
         {search && (
           <button

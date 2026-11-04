@@ -23,12 +23,12 @@ export function CalendarExport({ blocks, taskById, unavailable }: {
       </Button>
       {expanded && <section id={panelId} aria-label="Calendar export" className="mt-3 space-y-3 rounded-lg border p-4">
         <p className="max-w-prose text-sm text-muted-foreground">
-          Choose work blocks overlapping this month, using your current list and search filters. Each selected block exports its full interval. Deadlines stay separate.
+          Choose work blocks overlapping the displayed range, using your current scope and search filters. Each selected block exports its full interval. Deadlines and external events stay separate.
         </p>
         <p className="max-w-prose text-sm text-muted-foreground">
           The .ics file contains task titles and block dates or times. It is a snapshot, instead of live sync. Recurring tasks export only their selected blocks, as individual events.
         </p>
-        {blocks.length === 0 && <p className="text-sm text-muted-foreground">No work blocks match this month and these filters. Add blocks through the API or choose another month or filter.</p>}
+        {blocks.length === 0 && <p className="text-sm text-muted-foreground">No work blocks match this range and these filters. Add blocks through the API or choose another range or filter.</p>}
         <fieldset disabled={unavailable || exportCalendar.isPending} className="min-w-0">
           <legend className="sr-only">Work blocks to export</legend>
           <div className="max-h-64 overflow-y-auto">

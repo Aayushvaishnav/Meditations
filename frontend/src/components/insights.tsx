@@ -1,3 +1,4 @@
+import { SectionLayout } from "@/components/section-layout"
 import { useState } from "react"
 import { Activity, Brain, CalendarRange, Flame, ListChecks, TrendingDown, TrendingUp, Timer, Minus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -31,7 +32,7 @@ function TrendBadge({ value, prev }: { value: number; prev: number | null }) {
 
 function StatCard({ label, value, sub, icon: Icon }: { label: string; value: string; sub?: React.ReactNode; icon: typeof Activity }) {
   return (
-    <div className="glass rounded-2xl p-4">
+    <div className="glass min-w-0 rounded-2xl p-4">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Icon className="size-3.5" />
         {label}
@@ -54,24 +55,20 @@ export function InsightsView() {
 
   if (data.isError) {
     return (
-      <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto w-full max-w-4xl px-6 pt-5">
+      <SectionLayout width="workspace">
           <p className="pt-16 text-center text-sm text-destructive">Couldn't load insights — is the backend running?</p>
-        </div>
-      </main>
+        </SectionLayout>
     )
   }
 
   if (data.isLoading) {
     return (
-      <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto w-full max-w-4xl px-6 pt-5 pb-10">
+      <SectionLayout width="workspace">
           <h1 className="text-xl font-semibold tracking-tight">Insights</h1>
           <div className="mt-4">
             <InsightsSkeleton />
           </div>
-        </div>
-      </main>
+        </SectionLayout>
     )
   }
 
@@ -94,8 +91,7 @@ export function InsightsView() {
     }))
 
   return (
-    <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-      <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-6 pt-5 pb-10">
+    <SectionLayout width="workspace">
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Insights</h1>
         <div className="glass ml-auto flex items-center gap-0.5 rounded-lg p-0.5">
@@ -115,7 +111,7 @@ export function InsightsView() {
       </div>
 
       {/* stat row */}
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mt-4 grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4">
         <StatCard
           label="Avg score (7d)"
           value={totals ? totals.avg_score_7.toFixed(1) : "…"}
@@ -157,9 +153,9 @@ export function InsightsView() {
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <div className="mt-4 grid gap-4 @3xl:grid-cols-2">
         {/* focus chart */}
-        <div className="glass rounded-2xl p-4">
+        <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="text-sm font-semibold">Deep work per day</h2>
           <div className="mt-2">
             <BarsChart values={focusPoints} max={maxFocus} targetRatio={targetHours / maxFocus} />
@@ -168,7 +164,7 @@ export function InsightsView() {
         </div>
 
         {/* mood */}
-        <div className="glass rounded-2xl p-4">
+        <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="text-sm font-semibold">Mood</h2>
           <div className="mt-2">
               <LineChart points={moodPoints} color="var(--positive)" showGrid={false} />
@@ -178,8 +174,8 @@ export function InsightsView() {
       </div>
 
       {/* habits + rollups */}
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <div className="glass rounded-2xl p-4">
+      <div className="mt-4 grid gap-4 @3xl:grid-cols-2">
+        <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="text-sm font-semibold">Habits</h2>
           {(data.data?.habits ?? []).length === 0 ? (
             <p className="mt-3 text-xs text-muted-foreground">No daily habits configured yet.</p>
@@ -199,7 +195,7 @@ export function InsightsView() {
           )}
         </div>
 
-        <div className="glass rounded-2xl p-4">
+        <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold">
             <CalendarRange className="size-4 text-primary" /> Rollup trends
           </h2>
@@ -232,7 +228,6 @@ export function InsightsView() {
         <Brain className="size-3" /> Run "AI review" in the journal to persist scores with the LLM nudge; everything
         else here is computed deterministically from your telemetry.
       </p>
-    </div>
-    </main>
+    </SectionLayout>
   )
 }

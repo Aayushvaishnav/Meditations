@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, cleanup, fireEvent, render as renderBase, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useDraggable } from "@dnd-kit/core"
@@ -11,6 +11,11 @@ vi.mock("@dnd-kit/core", async importOriginal => {
   const original = await importOriginal<typeof import("@dnd-kit/core")>()
   return { ...original, useDraggable: vi.fn(original.useDraggable) }
 })
+function render(...args: Parameters<typeof renderBase>) {
+  const result = renderBase(...args)
+  fireEvent.click(screen.getByRole("button", { name: "Calendar sources" }))
+  return result
+}
 const sources = [{ id: "a", name: "Personal" }, { id: "b", name: "Work" }]
 function overlay(name = "Dentist"): ImportedOverlay {
   return { source_id: "a", items: [{ id: name, uid: name, source_id: "a", summary: name, status: "CONFIRMED", interval: { kind: "date", start: "2026-03-08", end: "2026-03-10" } }], unplaced: [] }
@@ -205,4 +210,30 @@ it.each([2, 3])("counts only actually hidden appointments with two imports and %
   const day = within(screen.getByRole("button", {name: "Add task on 2026-03-08"}).parentElement!.parentElement!)
   if (count === 2) expect(day.queryByText(/\+\d+ more/)).toBeNull()
   else expect(day.getByText("+1 more")).toBeDefined()
+})
+
+it("keeps selected appointments and query ownership when source controls close", async () => {
+  renderBase(view())
+  const disclosure = screen.getByRole("button", { name: "Calendar sources" })
+  expect(disclosure.getAttribute("aria-expanded")).toBe("false")
+  expect(screen.queryByRole("combobox", { name: "Imported calendar" })).toBeNull()
+  fireEvent.click(disclosure)
+  await select()
+  await waitFor(() => expect(chip()).toHaveLength(2))
+  const selectNode = screen.getByLabelText("Imported calendar")
+  fireEvent.click(disclosure)
+  expect(screen.queryByRole("combobox", { name: "Imported calendar" })).toBeNull()
+  expect(chip()).toHaveLength(2)
+  expect(screen.getByText(/Imported: Personal/)).toBeDefined()
+  routes["/calendar/imports/a/overlay"] = () => new Response("failed", { status: 500 })
+  await act(async () => { await client.invalidateQueries({ queryKey: [...calendarImportsKey, "overlay"] }) })
+  expect(screen.getByText(/Imported: Personal.*error/)).toBeDefined()
+  await waitFor(() => expect(chip()).toHaveLength(0))
+  fireEvent.click(disclosure)
+  expect(screen.getByLabelText("Imported calendar")).toBe(selectNode)
+  routes["/calendar/imports/a/overlay"] = () => overlay()
+  fireEvent.click(screen.getByRole("button", { name: "Retry appointments" }))
+  await waitFor(() => expect(chip()).toHaveLength(2))
+  fireEvent.click(screen.getByRole("button", { name: "Next month" }))
+  expect((screen.getByLabelText("Imported calendar") as HTMLSelectElement).value).toBe("a")
 })

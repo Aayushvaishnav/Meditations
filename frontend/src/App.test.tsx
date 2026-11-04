@@ -103,6 +103,14 @@ it("loads sections on demand while preserving the shell and current navigation",
   expect(lazyModules.second_brain.requested).not.toHaveBeenCalled()
   expect(lazyModules.settings.requested).not.toHaveBeenCalled()
 
+  const journalMain = screen.getByRole("main")
+  act(() => useUi.getState().setSidebar("collapsed"))
+  expect(useUi.getState().section).toBe("journal")
+  expect(screen.getByRole("main")).toBe(journalMain)
+  expectShellPreserved()
+  act(() => useUi.getState().setSidebar("expanded"))
+  expect(screen.getByRole("main")).toBe(journalMain)
+
   navigate("insights")
   expectLoading("insights")
   expectShellPreserved()

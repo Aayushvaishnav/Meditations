@@ -50,3 +50,24 @@ describe("live calendar overlay", () => {
     expect(screen.getByText(/Mirrored from the connected calendar · Read-only · confirmed/i)).toBeDefined()
   })
 })
+
+it("reports stale selected live data outside the closed controls without unmounting events", async () => {
+  const { CalendarSources } = await import("./calendar-sources")
+  overlays.set("c1", {
+    connection_id: "c1",
+    reconciliation: { state: "error", capability: "listing", last_synced_at: "2026-01-15T10:00:00", last_error: "Server unavailable" },
+    items: [dentist], unplaced: [],
+  })
+  render(<CalendarLiveOverlay inlineControls={false}>{(items, _count, controls, summary) => <>
+    <CalendarSources summary={summary}>{controls}</CalendarSources>
+    {items.map(item => <LiveEventChip key={item.id} event={item} onOpen={() => {}} />)}
+  </>}</CalendarLiveOverlay>)
+  const trigger = screen.getByRole("button", { name: "Calendar sources" })
+  fireEvent.click(trigger)
+  fireEvent.change(screen.getByLabelText("Live calendar"), { target: { value: "c1" } })
+  expect(screen.getByText(/Last successful check:/)).toBeDefined()
+  fireEvent.click(trigger)
+  expect(screen.getByText(/Live:.*stale appointments/)).toBeDefined()
+  expect(screen.getByRole("button", { name: /Dentist/ })).toBeDefined()
+  expect(screen.queryByRole("combobox", { name: "Live calendar" })).toBeNull()
+})
