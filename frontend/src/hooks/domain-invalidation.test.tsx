@@ -21,7 +21,7 @@ const day = "2026-10-30"
 const end = "2026-10-31"
 const task: Task = {
   id: "task-1", list_id: "list-1", parent_id: null, title: "Planned task",
-  description: null, priority: 0, status: "todo", due_date: `${day}T09:00:00`, deadline: { kind: "timed", at: `${day}T09:00:00` },
+  description: null, priority: 0, importance: "unassigned", urgency: "unassigned", status: "todo", due_date: `${day}T09:00:00`, deadline: { kind: "timed", at: `${day}T09:00:00` },
   estimated_minutes: null, actual_minutes: 0, recurrence_rule: null,
   recurrence_series_id: null, recurrence_occurrence: null, tags: [], order_index: 0,
   completed_at: null, created_at: `${day}T08:00:00`, updated_at: `${day}T08:00:00`,

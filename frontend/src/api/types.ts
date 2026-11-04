@@ -1,6 +1,9 @@
 export type TaskStatus = "todo" | "in_progress" | "completed" | "canceled"
 export type Priority = 0 | 1 | 2 | 3 // 0 none, 1 low (!3), 2 med (!2), 3 high (!1)
 
+export type TaskImportance = "unassigned" | "important" | "not_important"
+export type TaskUrgency = "unassigned" | "urgent" | "not_urgent"
+
 export type TaskDeadline =
   | { kind: "none" }
   | { kind: "date"; date: string } // calendar date; never a UTC instant
@@ -13,6 +16,8 @@ export interface Task {
   title: string
   description: string | null
   priority: Priority
+  importance: TaskImportance
+  urgency: TaskUrgency
   status: TaskStatus
   deadline: TaskDeadline
   due_date: string | null // legacy timed-deadline projection; null for date-only/none
@@ -43,6 +48,8 @@ export interface TaskInput {
   parent_id?: string | null
   description?: string | null
   priority?: Priority
+  importance?: TaskImportance
+  urgency?: TaskUrgency
   status?: TaskStatus
   deadline?: TaskDeadline
   due_date?: string | null // compatibility input; do not combine with deadline

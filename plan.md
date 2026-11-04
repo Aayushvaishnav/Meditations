@@ -221,7 +221,10 @@ v8 adds calendar connections/links; v9 adds credential bookkeeping; v10 adds
 immutable calendar dispatches and acknowledgment actions; v11 adds transactional
 calendar source-capture triggers; v12 adds sync acknowledgment times and explicit
 link selection state; v13 adds independent import sources, original upload snapshots,
-and opaque event identities. Fresh installations run all thirteen migrations.
+and opaque event identities. v14 adds the webhook outbox; v15 adds calendar inbound
+reconciliation. v16 adds independent task importance and urgency with non-null
+`unassigned` defaults and allowed-state CHECK constraints. Fresh installations
+run all sixteen migrations.
 Existing unversioned installations adopt the baseline and then upgrade. An explicit SQLite
 `BEGIN IMMEDIATE` serializes startup writers; pending schema changes, backfills,
 and version updates commit together. A failed upgrade rolls back the pending
@@ -254,6 +257,10 @@ CREATE TABLE tasks (
     title TEXT NOT NULL,
     description TEXT,
     priority INTEGER DEFAULT 0, -- 0: None, 1: Low (!3), 2: Med (!2), 3: High (!1)
+    importance TEXT NOT NULL DEFAULT 'unassigned'
+        CHECK (importance IN ('unassigned', 'important', 'not_important')),
+    urgency TEXT NOT NULL DEFAULT 'unassigned'
+        CHECK (urgency IN ('unassigned', 'urgent', 'not_urgent')),
     status TEXT DEFAULT 'todo', -- 'todo', 'in_progress', 'completed', 'canceled'
     due_date DATETIME, -- compatibility storage for timed deadlines; naive UTC
     deadline_date DATE, -- date-only deadline label; no timezone conversion
@@ -392,6 +399,24 @@ still exceed Vite's 500 KB advisory threshold; it is not suppressed.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
+
+#### Task classification (features/MAT-01)
+
+Tasks store independent `importance` (`unassigned | important | not_important`)
+and `urgency` (`unassigned | urgent | not_urgent`). Both default to `unassigned`
+for existing and ordinary new tasks, including AI capture/decomposition. No
+classification is inferred from priority, dates, overdue status or AI output.
+Create/PATCH reject null and unknown classification values; PATCH omission leaves
+a dimension unchanged, and explicit `unassigned` resets only that dimension.
+Classification edits leave priority, deadlines, completion and scoring unchanged.
+
+Recurring successors copy both dimensions from the completed occurrence; subtasks
+have their own classifications and do not inherit parent edits. The frontend
+uses the canonical tasks cache and its concurrent optimistic replay/rollback
+contract; temporary creations carry explicit defaults. Portable task JSON exports
+include both fields. SQLite backups preserve them; older restored databases gain
+`unassigned` values through v16. Portable JSON remains export-only; ICS import and
+work-block export do not assign classification. Matrix UI remains pending MAT-02.
 
 #### Calendar, date, and timer contracts (QA-04)
 

@@ -9,7 +9,7 @@ import {
 function task(overrides: Partial<Task> = {}): Task {
   return {
     id: "task", title: "Task", list_id: null, parent_id: null, description: null,
-    priority: 0, status: "todo", due_date: null, estimated_minutes: null,
+    priority: 0, importance: "unassigned", urgency: "unassigned", status: "todo", due_date: null, estimated_minutes: null,
     actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null,
     recurrence_occurrence: null, tags: [], order_index: 0, completed_at: null,
     created_at: "2026-01-01T00:00:00", updated_at: "2026-01-01T00:00:00",

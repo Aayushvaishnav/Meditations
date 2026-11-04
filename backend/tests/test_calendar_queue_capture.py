@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app import migrations
-from app.models import CalendarConnection, CalendarLink, Task, TimeBlock
+from app.models import CalendarConnection, CalendarLink, TimeBlock
 
 
 @pytest.fixture
@@ -23,8 +23,11 @@ async def engine():
 
 async def seed(engine):
     async with AsyncSession(engine) as session:
-        session.add(Task(id='t', title='Title'))
-        session.add(Task(id='other', title='Other'))
+        await session.execute(text(
+            "INSERT INTO tasks (id,title,priority,status,actual_minutes,tags,order_index,created_at,updated_at) "
+            "VALUES ('t','Title',0,'todo',0,'[]',0,'2026-01-01','2026-01-01'), "
+            "('other','Other',0,'todo',0,'[]',0,'2026-01-01','2026-01-01')"
+        ))
         session.add(CalendarConnection(id='c', server_url='https://example.test',
                                        calendar_url='https://example.test/cal/'))
         await session.flush()

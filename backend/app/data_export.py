@@ -18,7 +18,7 @@ TABLES = (
     (models.TaskList, "id name color icon is_favorite created_at"),
     (
         models.Task,
-        "id list_id parent_id title description priority status due_date deadline_date estimated_minutes actual_minutes recurrence_rule recurrence_series_id recurrence_occurrence tags order_index completed_at created_at updated_at",
+        "id list_id parent_id title description priority importance urgency status due_date deadline_date estimated_minutes actual_minutes recurrence_rule recurrence_series_id recurrence_occurrence tags order_index completed_at created_at updated_at",
     ),
     (models.TimeBlock, "id task_id kind timezone start_at end_at start_date end_date created_at updated_at"),
     (models.FocusSession, "id task_id duration_minutes session_type notes created_at"),
@@ -88,11 +88,14 @@ Focus created_at is the recorded session timestamp, not a reconstructed start ti
 Every record includes the following fields; missing collections are not omitted.
 
 - lists: id, name, color, icon, is_favorite, created_at.
-- tasks: id, list_id, parent_id, title, description, priority, status, due_date, deadline_date,
+- tasks: id, list_id, parent_id, title, description, priority, importance, urgency, status, due_date, deadline_date,
   estimated_minutes, actual_minutes, recurrence_rule, recurrence_series_id,
   recurrence_occurrence, tags, order_index, completed_at, created_at, updated_at.
   Priority is 0 (none), 1 (low), 2 (medium), or 3 (high). Status is todo,
-  in_progress, completed, or canceled. tags is a JSON array. recurrence_rule is
+  in_progress, completed, or canceled. importance is unassigned, important, or
+  not_important; urgency is unassigned, urgent, or not_urgent. Both default to
+  unassigned independently; neither is inferred from priority or deadlines.
+  tags is a JSON array. recurrence_rule is
   preserved as stored; exporting does not expand recurrence or create occurrences.
 - time_blocks: id, task_id, kind, timezone, start_at, end_at, start_date, end_date,
   created_at, updated_at.

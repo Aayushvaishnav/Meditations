@@ -7,6 +7,7 @@ from sqlalchemy import JSON, CheckConstraint, Column, Index, Integer, String, Un
 from sqlmodel import Field, SQLModel
 
 from app.util import new_id, utc_now
+from app.task_classification import Importance, Urgency
 
 
 class TaskList(SQLModel, table=True):
@@ -27,6 +28,14 @@ class TaskFields(SQLModel):
     title: str
     description: str | None = None
     priority: int = 0  # 0 none, 1 low (!3), 2 med (!2), 3 high (!1)
+    importance: Importance = Field(
+        default="unassigned",
+        sa_column=Column(String, nullable=False, server_default="unassigned"),
+    )
+    urgency: Urgency = Field(
+        default="unassigned",
+        sa_column=Column(String, nullable=False, server_default="unassigned"),
+    )
     status: str = Field(default="todo", index=True)  # todo|in_progress|completed|canceled
     due_date: datetime | None = Field(default=None, index=True)
     deadline_date: Date | None = Field(default=None, index=True)
@@ -46,6 +55,8 @@ class Task(TaskFields, table=True):
     __tablename__ = "tasks"
     __table_args__ = (
         Index("uq_task_recurrence_occurrence", "recurrence_series_id", "recurrence_occurrence", unique=True),
+        CheckConstraint("importance IN ('unassigned', 'important', 'not_important')", name="ck_task_importance"),
+        CheckConstraint("urgency IN ('unassigned', 'urgent', 'not_urgent')", name="ck_task_urgency"),
         CheckConstraint("due_date IS NULL OR deadline_date IS NULL", name="ck_task_deadline_exclusive"),
     )
 
