@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { StrictMode } from "react"
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { StrictMode, Suspense, lazy } from "react"
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { Editor } from "@tiptap/core"
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   editor: undefined as Editor | undefined,
   mutate: vi.fn(),
   refetch: vi.fn(),
+  assist: { clear: vi.fn(), run: vi.fn(), pending: false, text: "", error: null },
   entries: {} as Record<string, { raw_markdown: string; mood: number | null; energy: number | null } | null | undefined>,
 }))
 
@@ -29,7 +30,7 @@ vi.mock("@/hooks/api", () => ({
   useSaveJournal: () => ({ mutate: mocks.mutate }),
   useJournalActivity: () => ({ refetch: mocks.refetch }),
   useJournalDays: () => ({ data: [] }),
-  useEditorAssist: () => ({ clear: vi.fn() }),
+  useEditorAssist: () => mocks.assist,
 }))
 vi.mock("@/components/daily-review-card", () => ({ DailyReviewCard: () => null }))
 vi.mock("@/components/journal-calendar", () => ({ MiniMonth: () => null }))
@@ -72,6 +73,9 @@ beforeEach(() => {
   vi.setSystemTime(new Date(2026, 9, 20, 12))
   mocks.mutate.mockReset()
   mocks.refetch.mockReset()
+  mocks.assist.text = ""
+  mocks.assist.pending = false
+  mocks.assist.run.mockReset()
   mocks.entries = { "2026-10-20": { raw_markdown: "A", mood: null, energy: null } }
   useUi.setState({ section: "journal", journalDay: null })
 })
@@ -332,7 +336,7 @@ describe("journal slash menu lifecycle", () => {
     const textbox = screen.getByRole("textbox", { name: "Journal entry" })
     const menu = screen.getByRole("listbox")
     expect(textbox.getAttribute("aria-controls")).toBe(menu.id)
-    const option = screen.getByRole("option", { name: /Heading 2/ })
+    const option = within(menu).getByRole("option", { name: /Heading 2/ })
     fireEvent.pointerMove(option)
     expect(textbox.getAttribute("aria-activedescendant")).toBe(option.id)
     await act(async () => {
@@ -411,4 +415,117 @@ describe("journal slash menu lifecycle", () => {
     await act(async () => { vi.advanceTimersByTime(700) })
     expect(screen.queryByRole("listbox")).toBeNull()
   })
+})
+
+describe("journal formatting integration", () => {
+  const rangeRects = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects")
+  const rangeBounds = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect")
+  beforeEach(() => {
+    Range.prototype.getClientRects = () => [new DOMRect(20, 20, 100, 20)] as unknown as DOMRectList
+    Range.prototype.getBoundingClientRect = () => new DOMRect(20, 20, 100, 20)
+  })
+  afterEach(() => {
+    if (rangeRects) Object.defineProperty(Range.prototype, "getClientRects", rangeRects)
+    else Reflect.deleteProperty(Range.prototype, "getClientRects")
+    if (rangeBounds) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBounds)
+    else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect")
+  })
+  function toolbar() { return within(screen.getByRole("group", { name: "Journal formatting" })) }
+
+  it("freezes formatted Markdown and clicked ratings before switching days", () => {
+    mount()
+    edit("Draft")
+    act(() => mocks.editor!.commands.setTextSelection({ from: 1, to: 6 }))
+    fireEvent.click(toolbar().getByRole("button", { name: "Bold" }))
+    fireEvent.click(screen.getByRole("button", { name: "Mood 4 of 5" }))
+    expect(screen.getByRole("status").textContent).toContain("Unsaved changes")
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }))
+    expect(mocks.mutate).toHaveBeenCalledExactlyOnceWith({ day: "2026-10-20", raw_markdown: "**Draft**", mood: 4, energy: null })
+    advance()
+    expect(mocks.mutate).toHaveBeenCalledTimes(1)
+  })
+
+  it("restores saved formatting without re-saving on load", () => {
+    mocks.entries["2026-10-20"] = { raw_markdown: "## **Reflection**\n\n- [x] Done\n\n[Link](https://example.com)", mood: 3, energy: 2 }
+    mount()
+    expect(document.querySelector(".tiptap h2 strong")?.textContent).toBe("Reflection")
+    expect(document.querySelector('.tiptap li[data-checked="true"]')).toBeTruthy()
+    expect(document.querySelector(".tiptap a")?.getAttribute("href")).toBe("https://example.com")
+    advance()
+    expect(mocks.mutate).not.toHaveBeenCalled()
+  })
+
+  it("does not create an empty entry through formatting-only actions", () => {
+    mocks.entries["2026-10-20"] = null
+    mount()
+    fireEvent.click(toolbar().getByRole("button", { name: "Bold" }))
+    advance()
+    expect(mocks.mutate).not.toHaveBeenCalled()
+  })
+
+  it("disables formatting while the destination day loads", () => {
+    mocks.entries["2026-10-21"] = undefined
+    const view = mount()
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }))
+    expect(toolbar().getByRole("button", { name: "Bold" }).hasAttribute("disabled")).toBe(true)
+    mocks.entries["2026-10-21"] = { raw_markdown: "Arrived", mood: null, energy: null }
+    view.refresh()
+    expect(toolbar().getByRole("button", { name: "Bold" }).hasAttribute("disabled")).toBe(false)
+    advance()
+    expect(mocks.mutate).not.toHaveBeenCalled()
+  })
+
+  it("keeps a pending formatted draft through activity insertion", async () => {
+    mocks.refetch.mockResolvedValue({ data: activityData })
+    mount()
+    edit("Draft")
+    act(() => mocks.editor!.commands.setTextSelection({ from: 1, to: 6 }))
+    fireEvent.click(toolbar().getByRole("button", { name: "Bold" }))
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Day activity" })) })
+    advance()
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ raw_markdown: expect.stringContaining("**Draft**") }))
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ raw_markdown: expect.stringContaining("- [x] Completed task") }))
+  })
+
+  it("rejects an AI preview after formatting changed its source", async () => {
+    mount()
+    const editor = mocks.editor!
+    const extension = editor.extensionManager.extensions.find((item) => item.name === "slashCommands")!
+    mocks.assist.text = "Replacement"
+    await act(async () => { await extension.options.onAI(editor, "improve") })
+    act(() => editor.commands.setTextSelection({ from: 1, to: 2 }))
+    fireEvent.click(toolbar().getByRole("button", { name: "Bold" }))
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }))
+    expect(editor.getHTML()).toContain("<strong>A</strong>")
+    expect(editor.getText()).not.toContain("Replacement")
+    advance()
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ raw_markdown: "**A**" }))
+  })
+
+  it("accepts a Markdown AI preview with supported formatting", async () => {
+    mount()
+    const editor = mocks.editor!
+    const extension = editor.extensionManager.extensions.find((item) => item.name === "slashCommands")!
+    mocks.assist.text = "## **Updated**\n\n- [ ] Task\n\n[Source](https://example.com)"
+    await act(async () => { await extension.options.onAI(editor, "improve") })
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }))
+    expect(document.querySelector(".tiptap h2 strong")?.textContent).toBe("Updated")
+    expect(document.querySelector('.tiptap input[type="checkbox"]')).toBeTruthy()
+    expect(document.querySelector(".tiptap a")?.getAttribute("href")).toBe("https://example.com")
+    advance()
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ day: "2026-10-20", raw_markdown: expect.stringContaining("## **Updated**") }))
+  })
+})
+
+
+it("mounts writing controls through a lazy StrictMode journal boundary", async () => {
+  const LazyJournal = lazy(() => Promise.resolve({ default: JournalView }))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  await act(async () => {
+    render(<StrictMode><QueryClientProvider client={client}><Suspense fallback={null}><LazyJournal /></Suspense></QueryClientProvider></StrictMode>)
+  })
+  expect(screen.getByRole("textbox", { name: "Journal entry" })).toBeTruthy()
+  expect(screen.getByRole("group", { name: "Journal formatting" })).toBeTruthy()
+  advance()
+  expect(mocks.mutate).not.toHaveBeenCalled()
 })

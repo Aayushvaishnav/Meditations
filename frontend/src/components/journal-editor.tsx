@@ -1,10 +1,7 @@
 import { SectionLayout } from "@/components/section-layout"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
-import StarterKit from "@tiptap/starter-kit"
 import { Placeholder } from "@tiptap/extensions"
-import { TaskItem, TaskList } from "@tiptap/extension-list"
-import { Markdown } from "tiptap-markdown"
 import { Check, ChevronLeft, ChevronRight, ListChecks, Sparkles, Wand2, X } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { MiniMonth } from "@/components/journal-calendar"
@@ -20,10 +17,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { cn } from "cn"
 import type { Editor } from "@tiptap/core"
-
-function getMarkdown(ed: Editor): string {
-  return (ed.storage as unknown as { markdown: { getMarkdown(): string } }).markdown.getMarkdown()
-}
+import { journalExtensions, getJournalMarkdown as getMarkdown } from "./journal/extensions"
+import { FormattingToolbar } from "./journal/formatting-toolbar"
+import { SelectionToolbar } from "./journal/selection-toolbar"
 
 function toDayParam(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0")
@@ -105,6 +101,7 @@ export function JournalView() {
   const activity = useJournalActivity(day)
   const daysData = useJournalDays("2000-01-01", "2099-12-31", section === "journal").data
 
+  const [saveFeedback, setSaveFeedback] = useState<"unchanged" | "queued">("unchanged")
   const [loadedDay, setLoadedDay] = useState<string | null>(null)
   const [openPopover, setOpenPopover] = useState(false)
   const [mode, setMode] = useState<"editor" | "calendar">("editor")
@@ -133,11 +130,8 @@ export function JournalView() {
 
   const editor = useEditor({
     extensions: [
-      StarterKit,
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Markdown.configure({ html: false, breaks: true }),
-      Placeholder.configure({ placeholder: "Start writing… type / for blocks" }),
+      ...journalExtensions(),
+      Placeholder.configure({ placeholder: "Write about your day. Type / for blocks and actions." }),
       SlashCommands.configure({
         onActivity: (ed) => {
           void extensionHandlers.current.insertActivity(ed)
@@ -170,6 +164,7 @@ export function JournalView() {
       mood: overrides && "mood" in overrides ? (overrides.mood ?? null) : moodRef.current,
       energy: overrides && "energy" in overrides ? (overrides.energy ?? null) : energyRef.current,
     }
+    setSaveFeedback("queued")
     saveTimer.current = window.setTimeout(flushSave, 700)
   }
 
@@ -180,6 +175,7 @@ export function JournalView() {
     const pending = pendingSave.current
     pendingSave.current = null
     if (!pending) return
+    setSaveFeedback("unchanged")
     // never create empty entries: visiting a day must not pollute the journal
     const hasContent = pending.md.trim() || pending.mood !== null || pending.energy !== null
     if (!hasContent && queryClient.getQueryData(["journal", pending.day]) === null) return
@@ -366,8 +362,10 @@ export function JournalView() {
             Today
           </Button>
         )}
-        <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-          {save.isPending ? (
+        <div role="status" aria-live="polite" className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+          {saveFeedback === "queued" ? (
+            "Unsaved changes"
+          ) : save.variables?.day !== day ? null : save.isPending ? (
             "Saving…"
           ) : save.isError ? (
             <span className="text-destructive">Save failed</span>
@@ -408,7 +406,9 @@ export function JournalView() {
       ) : (
       <div className="mt-3 grid min-w-0 items-start gap-6 @5xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
         <div className="min-w-0">
-          <div className="glass rounded-2xl px-5 py-4">
+          <div className="journal-writing-surface glass rounded-2xl px-5 py-4">
+            {editor && <FormattingToolbar key={`${day}:${ready}`} editor={editor} />}
+            {editor && ready && <SelectionToolbar key={day} editor={editor} />}
             <div className="mx-auto max-w-[82ch] min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
               <EditorContent editor={editor} />
             </div>
