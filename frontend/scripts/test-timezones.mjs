@@ -7,6 +7,7 @@ const tests = [
   "src/lib/dates.test.ts",
   "src/lib/parsing.test.ts",
   "src/lib/task-filter.test.ts",
+  "src/lib/eisenhower.test.ts",
   "src/lib/task-deadlines.test.ts",
   "src/lib/time-blocks.test.ts",
   "src/lib/calendar-overlay.test.ts",

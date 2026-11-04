@@ -9,6 +9,7 @@ import {
   Columns3,
   Command,
   Inbox,
+  Grid2X2,
   List,
   ListTodo,
   Moon,
@@ -22,7 +23,7 @@ import {
 } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { useLists, useTasks } from "@/hooks/api"
-import { THEMES, useUi, type Section, type SmartView } from "@/stores/ui"
+import { THEMES, useUi, type MainView, type Section, type SmartView } from "@/stores/ui"
 import { useFocusTimer } from "@/stores/timer"
 import { formatDeadline } from "@/lib/task-deadlines"
 import { cn } from "cn"
@@ -102,7 +103,7 @@ function PaletteBody() {
       ui.setScope({ kind: "smart", id })
       setOpen(false)
     }
-    const goView = (view: "list" | "board" | "calendar") => {
+    const goView = (view: MainView) => {
       ui.setSection("tasks")
       ui.setView(view)
       setOpen(false)
@@ -136,6 +137,7 @@ function PaletteBody() {
         { id: "list", label: "List view", icon: List },
         { id: "board", label: "Board view", icon: Columns3 },
         { id: "calendar", label: "Calendar view", icon: Calendar },
+        { id: "matrix", label: "Matrix view", icon: Grid2X2 },
       ] as const
     ).map(({ id, label, icon: Icon }) => ({
       id: `view-${id}`,

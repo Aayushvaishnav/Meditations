@@ -1,7 +1,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
-export type MainView = "list" | "board" | "calendar"
+export type MainView = "list" | "board" | "calendar" | "matrix"
 export type CalendarMode = "year" | "month" | "week" | "agenda" | "multi-day" | "multi-week"
 export type Theme = "dark" | "light" | "tokyo-night" | "rose-pine" | "gruvbox" | "dracula" | "nord" | "ayu"
 export type SmartView = "today" | "overdue" | "upcoming" | "all" | "completed"

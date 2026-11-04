@@ -65,7 +65,7 @@ function TitleWithStrike({ task }: { task: Task }) {
   )
 }
 
-function TaskMenu({ task, lists, onRename }: { task: Task; lists: { id: string; name: string }[]; onRename: () => void }) {
+function TaskMenu({ task, lists, onRename, visible = false }: { task: Task; lists: { id: string; name: string }[]; onRename: () => void; visible?: boolean }) {
   const updateTask = useUpdateTask()
   const deleteTask = useDeleteTask()
   const decompose = useDecomposeTask()
@@ -88,7 +88,7 @@ function TaskMenu({ task, lists, onRename }: { task: Task; lists: { id: string; 
             variant="ghost"
             size="icon-xs"
             aria-label={`Options for "${task.title}"`}
-            className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-open:opacity-100"
+            className={visible ? undefined : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-open:opacity-100"}
           />
         }
       >
@@ -199,11 +199,15 @@ export function TaskItem({
   subtasks,
   lists,
   showList = false,
+  actionsVisible = false,
+  showCompletedDeadline = false,
 }: {
   task: Task
   subtasks: Task[]
   lists: { id: string; name: string }[]
   showList?: boolean
+  actionsVisible?: boolean
+  showCompletedDeadline?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -266,14 +270,14 @@ export function TaskItem({
                 setRenaming(true)
               }}
               title="Double-click to rename"
-              className="block w-full cursor-text text-left text-sm"
+              className="block w-full cursor-text text-left text-sm break-words"
             >
               <TitleWithStrike task={task} />
             </button>
           )}
 
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            {!done && <DueChip task={task} />}
+            {(!done || showCompletedDeadline) && <DueChip task={task} />}
             {task.priority !== 0 && <PriorityBadge priority={task.priority} />}
             {task.estimated_minutes !== null && (
               <Badge variant="outline" className="gap-1 text-muted-foreground">
@@ -304,6 +308,7 @@ export function TaskItem({
           <TaskMenu
             task={task}
             lists={lists}
+            visible={actionsVisible}
             onRename={() => {
               setDraft(task.title)
               setRenaming(true)
