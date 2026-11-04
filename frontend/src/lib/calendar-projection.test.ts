@@ -5,7 +5,7 @@ import type { InboundOverlayItem } from "@/api/calendar-inbound-types"
 import { projectCalendar } from "./calendar-projection"
 import { calendarRange } from "./calendar-range"
 
-const task: Task = { id: "t", title: "Task", description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: null, deadline: { kind: "date", date: "2026-03-08" }, estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null, tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01", updated_at: "2026-03-01" }
+const task: Task = { id: "t", title: "Task", description: null, list_id: null, parent_id: null, priority: 0, importance: "unassigned", urgency: "unassigned", status: "todo", due_date: null, deadline: { kind: "date", date: "2026-03-08" }, estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null, tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01", updated_at: "2026-03-01" }
 const block: TimeBlock = { id: "b", task_id: "t", kind: "all_day", start_date: "2026-03-08", end_date: "2026-03-10", start_at: null, end_at: null, timezone: null, created_at: "2026-03-01", updated_at: "2026-03-01" }
 const imported: ImportedOverlayItem = { id: "same", source_id: "file", uid: "uid", summary: "Floating", status: "confirmed", interval: { kind: "floating", start: "2026-03-08T09:00:00", end: "2026-03-08T10:00:00" } }
 const live: InboundOverlayItem = { id: "same", connection_id: "remote", uid: "uid", summary: "Live", status: "confirmed", interval: { kind: "date", start: "2026-03-08", end: "2026-03-09" } }

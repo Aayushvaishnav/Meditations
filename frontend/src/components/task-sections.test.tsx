@@ -9,7 +9,7 @@ vi.mock("@/components/task-item", () => ({
   TaskItem: ({ task, subtasks }: { task: Task; subtasks: Task[] }) => <div>{task.title}{subtasks.map(child => <span key={child.id}>{child.title}</span>)}</div>,
 }))
 function task(id: string, patch: Partial<Task> = {}): Task {
-  return { id, title: id, description: null, list_id: "work", parent_id: null, priority: 0, status: "todo", due_date: null, deadline: deadlineFromLegacy(patch.due_date ?? null),
+  return { id, title: id, description: null, list_id: "work", parent_id: null, priority: 0, importance: "unassigned", urgency: "unassigned", status: "todo", due_date: null, deadline: deadlineFromLegacy(patch.due_date ?? null),
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null,
     tags: [], order_index: 0, completed_at: null, created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00", ...patch }
 }

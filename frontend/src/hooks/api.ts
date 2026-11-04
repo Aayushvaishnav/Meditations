@@ -117,6 +117,8 @@ export function useCreateTask() {
         title: input.title,
         description: input.description ?? null,
         priority: input.priority ?? 0,
+        importance: input.importance ?? "unassigned",
+        urgency: input.urgency ?? "unassigned",
         status: input.status ?? "todo",
         deadline,
         due_date: deadline.kind === "timed" ? deadline.at : null,

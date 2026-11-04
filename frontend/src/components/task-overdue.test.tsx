@@ -24,7 +24,7 @@ vi.mock("@/hooks/api", () => ({
 function task(status: Task["status"] = "todo"): Task {
   return {
     id: "task", title: "Deadline task", description: null, list_id: null, parent_id: null,
-    priority: 0, status, due_date: new Date(Date.now() + 1000).toISOString(),
+    priority: 0, importance: "unassigned", urgency: "unassigned", status, due_date: new Date(Date.now() + 1000).toISOString(),
     deadline: { kind: "timed", at: new Date(Date.now() + 1000).toISOString() },
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null,
     recurrence_series_id: null, recurrence_occurrence: null, tags: [], order_index: 0,

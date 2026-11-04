@@ -41,6 +41,8 @@ async def spawn_successor(session: AsyncSession, task: Task) -> None:
         title=task.title,
         description=task.description,
         priority=task.priority,
+        importance=task.importance,
+        urgency=task.urgency,
         due_date=next_due if task.deadline_date is None else None,
         deadline_date=next_due.date() if task.deadline_date is not None else None,
         estimated_minutes=task.estimated_minutes,

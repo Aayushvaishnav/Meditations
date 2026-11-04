@@ -3,14 +3,14 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel
 
 from app import migrations
-from app.models import CalendarConnection, CalendarLink, Task, TimeBlock
+from app.models import CalendarConnection, CalendarLink, TimeBlock
 from app.recovery import _contract
 
 
@@ -28,7 +28,10 @@ async def engine():
 
 async def seed_source(engine):
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        session.add(Task(id="task", title="Existing task"))
+        await session.execute(text(
+            "INSERT INTO tasks (id,title,priority,status,actual_minutes,tags,order_index,created_at,updated_at) "
+            "VALUES ('task','Existing task',0,'todo',0,'[]',0,'2026-01-01','2026-01-01')"
+        ))
         await session.flush()
         session.add(TimeBlock(id="block", task_id="task", kind="all_day",
                               timezone=None, start_date=date(2026, 1, 1),
@@ -70,7 +73,10 @@ async def test_v8_upgrade_preserves_sources_and_rolls_back_then_retries(engine, 
     await migrations.migrate(engine)
     after = await snapshot(engine)
     assert after[0] == migrations.LATEST_VERSION
-    assert after[1:3] == before[1:3]
+    assert after[2] == before[2]
+    for old, new in zip(before[1], after[1], strict=True):
+        assert {key: new._mapping[key] for key in old._mapping} == dict(old._mapping)
+        assert new._mapping['importance'] == new._mapping['urgency'] == 'unassigned'
     async with engine.connect() as conn:
         assert (await conn.exec_driver_sql("SELECT count(*) FROM calendar_links")).scalar_one() == 0
         assert (await conn.exec_driver_sql("SELECT count(*) FROM calendar_connections")).scalar_one() == 0

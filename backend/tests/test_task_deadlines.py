@@ -151,7 +151,7 @@ async def test_storage_deadline_constraint(schema):
     from sqlalchemy.exc import IntegrityError
     from sqlmodel import SQLModel
 
-    constraint = next(c for c in Task.__table__.constraints if isinstance(c, CheckConstraint))
+    constraint = next(c for c in Task.__table__.constraints if isinstance(c, CheckConstraint) and c.name == 'ck_task_deadline_exclusive')
     assert constraint.name == 'ck_task_deadline_exclusive'
     assert str(constraint.sqltext) == 'due_date IS NULL OR deadline_date IS NULL'
     engine = create_async_engine('sqlite+aiosqlite:///:memory:')

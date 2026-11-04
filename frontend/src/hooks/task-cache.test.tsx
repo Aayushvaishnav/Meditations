@@ -18,7 +18,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 function task(id: string, patch: Partial<Task> = {}): Task {
-  return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, status: "todo", due_date: null, deadline: deadlineFromLegacy(patch.due_date ?? null),
+  return { id, title: id, description: null, list_id: null, parent_id: null, priority: 0, importance: "unassigned", urgency: "unassigned", status: "todo", due_date: null, deadline: deadlineFromLegacy(patch.due_date ?? null),
     estimated_minutes: null, actual_minutes: 0, recurrence_rule: null, recurrence_series_id: null, recurrence_occurrence: null,
     tags: [], order_index: 0, completed_at: null, created_at: "2026-10-01T00:00:00", updated_at: "2026-10-01T00:00:00", ...patch }
 }
@@ -39,6 +39,69 @@ async function start(action: () => Promise<unknown>) {
 async function finish(action: () => void, pending: { done: Promise<unknown> }) {
   await act(async () => { action(); await pending.done })
 }
+
+describe("task classification mutations", () => {
+  it.each([
+    {},
+    { importance: "important" as const },
+    { importance: "not_important" as const, urgency: "urgent" as const },
+  ])("creates with explicit defaults while preserving supplied states: %j", async (classification) => {
+    const request = deferred<Task>()
+    vi.mocked(api.post).mockReturnValue(request.promise)
+    const { result } = hooks()
+    const pending = await start(() => result.current.create.mutateAsync({ title: "New", priority: 3, ...classification }))
+    expect(rows().at(-1)).toMatchObject({
+      importance: "unassigned", urgency: "unassigned", ...classification, priority: 3,
+    })
+    await finish(() => request.resolve(task("new", { title: "New", priority: 3, ...classification })), pending)
+    expect(rows().at(-1)).toMatchObject({
+      id: "new", importance: "unassigned", urgency: "unassigned", ...classification,
+    })
+    expect(api.post).toHaveBeenCalledWith("/tasks", { title: "New", priority: 3, ...classification })
+  })
+
+  it.each([true, false])("rolls back classification without losing a concurrent deadline edit (classification settles first: %s)", async (classificationFirst) => {
+    const original = task("a", { importance: "not_important", urgency: "urgent", priority: 3 })
+    client.setQueryData(qk.tasks, [original])
+    const classification = deferred<Task>(), deadline = deferred<Task>()
+    vi.mocked(api.patch).mockReturnValueOnce(classification.promise).mockReturnValueOnce(deadline.promise)
+    const { result } = hooks()
+    const move = await start(() => result.current.update.mutateAsync({ id: "a", patch: { importance: "important", urgency: "not_urgent" } }))
+    expect(rows()[0]).toMatchObject({ importance: "important", urgency: "not_urgent", priority: 3 })
+    const edit = await start(() => result.current.update.mutateAsync({ id: "a", patch: { deadline: { kind: "date", date: "2026-11-10" } } }))
+    const reject = () => classification.reject(new Error("rejected"))
+    const resolve = () => deadline.resolve({ ...original, deadline: { kind: "date", date: "2026-11-10" } })
+    if (classificationFirst) {
+      await finish(reject, move)
+      await finish(resolve, edit)
+    } else {
+      await finish(resolve, edit)
+      await finish(reject, move)
+    }
+    expect(rows()[0]).toMatchObject({ importance: "not_important", urgency: "urgent", priority: 3, deadline: { kind: "date", date: "2026-11-10" } })
+  })
+
+  it("preserves an independent urgency edit when an importance edit fails", async () => {
+    const importance = deferred<Task>(), urgency = deferred<Task>()
+    vi.mocked(api.patch).mockReturnValueOnce(importance.promise).mockReturnValueOnce(urgency.promise)
+    const { result } = hooks()
+    const first = await start(() => result.current.update.mutateAsync({ id: "a", patch: { importance: "important" } }))
+    const second = await start(() => result.current.update.mutateAsync({ id: "a", patch: { urgency: "urgent" } }))
+    expect(rows()[0]).toMatchObject({ importance: "important", urgency: "urgent" })
+    await finish(() => urgency.resolve(task("a", { urgency: "urgent" })), second)
+    await finish(() => importance.reject(new Error("rejected")), first)
+    expect(rows()[0]).toMatchObject({ importance: "unassigned", urgency: "urgent" })
+  })
+
+  it("resets just one dimension without clearing the other", async () => {
+    client.setQueryData(qk.tasks, [task("a", { importance: "important", urgency: "urgent" })])
+    vi.mocked(api.patch).mockResolvedValue(task("a", { urgency: "urgent" }))
+    const { result } = hooks()
+    await act(async () => { await result.current.update.mutateAsync({ id: "a", patch: { importance: "unassigned" } }) })
+    expect(rows()[0]).toMatchObject({ importance: "unassigned", urgency: "urgent" })
+    expect(api.patch).toHaveBeenCalledWith("/tasks/a", { importance: "unassigned" })
+  })
+})
 
 describe("task mutation concurrency", () => {
   it("does not erase a successful change on another task when an older request fails", async () => {

@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 from pydantic import ConfigDict, StringConstraints, computed_field, field_validator
 from sqlmodel import Field, SQLModel
 
+from app.task_classification import Importance, Urgency
 from app.recurrence import TaskRule
 from app.util import normalize_dt
 from app.task_deadlines import Deadline, DeadlineInput, NoDeadline, deadline_value
@@ -40,6 +41,8 @@ class ListUpdate(SQLModel):
 
 # --- Tasks ---
 class TaskCreate(DeadlineInput, SQLModel):
+    importance: Importance = "unassigned"
+    urgency: Urgency = "unassigned"
     deadline: Deadline = Field(default_factory=NoDeadline)
     title: TitleText
     list_id: str | None = None
@@ -59,6 +62,8 @@ class TaskCreate(DeadlineInput, SQLModel):
 
 
 class TaskUpdate(DeadlineInput, SQLModel):
+    importance: Importance = "unassigned"
+    urgency: Urgency = "unassigned"
     deadline: Deadline = Field(default_factory=NoDeadline)
     title: TitleText | None = None
     description: str | None = None

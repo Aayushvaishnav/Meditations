@@ -61,8 +61,9 @@ async def test_fresh_and_legacy_equivalent_with_independent_backfill(engine):
     assert await version(engine) == migrations.LATEST_VERSION
     async with engine.connect() as conn:
         rows = (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all()
-        assert [tuple(row[:-3]) for row in rows] == [tuple(row) for row in original]
-        assert {row[0]: tuple(row[-3:-1]) for row in rows} == {
+        assert [{key: row._mapping[key] for key in original[0]._mapping} for row in rows] == [dict(row._mapping) for row in original]
+        assert all(row._mapping['importance'] == row._mapping['urgency'] == 'unassigned' for row in rows)
+        assert {row._mapping['id']: (row._mapping['recurrence_series_id'], row._mapping['recurrence_occurrence']) for row in rows} == {
             'one': ('one', 0), 'two': ('two', 0), 'empty': (None, None), 'none': (None, None),
         }
         assert (await conn.exec_driver_sql('SELECT name FROM lists')).scalar_one() == 'Personal'
@@ -273,7 +274,8 @@ async def test_failed_time_blocks_upgrade_preserves_v5_then_retries(engine, monk
             await migrations.migrate(engine)
             assert await version(engine) == migrations.LATEST_VERSION
         async with engine.connect() as conn:
-            assert (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all() == tasks
+            rows = (await conn.exec_driver_sql('SELECT * FROM tasks ORDER BY id')).all()
+            assert [{key: row._mapping[key] for key in tasks[0]._mapping} for row in rows] == [dict(row._mapping) for row in tasks]
             assert (await conn.exec_driver_sql('SELECT * FROM focus_sessions')).all() == focus
     async with engine.connect() as conn:
         assert (await conn.exec_driver_sql('SELECT count(*) FROM time_blocks')).scalar_one() == 0
