@@ -1,3 +1,4 @@
+import { SectionLayout } from "@/components/section-layout"
 import type { Section } from "@/stores/ui"
 
 const SECTION_LABELS: Record<Section, string> = {
@@ -10,12 +11,10 @@ const SECTION_LABELS: Record<Section, string> = {
 
 export function SectionLoading({ section }: { section: Section }) {
   return (
-    <main className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto" aria-busy="true">
-      <div className="mx-auto max-w-3xl px-6 py-12">
+    <SectionLayout width={section === "settings" ? "reading" : "workspace"} aria-busy="true">
         <p role="status" className="text-sm text-muted-foreground">
           Loading {SECTION_LABELS[section]}…
         </p>
-      </div>
-    </main>
+    </SectionLayout>
   )
 }

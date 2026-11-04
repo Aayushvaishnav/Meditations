@@ -1,3 +1,4 @@
+import { SectionLayout } from "@/components/section-layout"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
@@ -11,7 +12,8 @@ import { JournalCalendar } from "@/components/journal-calendar-view"
 import { DailyReviewCard } from "@/components/daily-review-card"
 import { Button } from "@/components/ui/button"
 import { useEditorAssist, useJournalActivity, useJournalDays, useJournalEntry, useSaveJournal } from "@/hooks/api"
-import { SlashCommands, type AssistAction } from "@/components/slash-command"
+import { exitSuggestion } from "@tiptap/suggestion"
+import { SlashCommands, slashPluginKey, type AssistAction } from "@/components/slash-command"
 import { formatDuration } from "@/lib/dates"
 import { useUi } from "@/stores/ui"
 import { useQueryClient } from "@tanstack/react-query"
@@ -146,6 +148,7 @@ export function JournalView() {
       }),
     ],
     content: "",
+    editorProps: { attributes: { role: "textbox", "aria-label": "Journal entry", "aria-multiline": "true" } },
     onUpdate: ({ editor }) => scheduleSave(editor),
   })
 
@@ -191,7 +194,12 @@ export function JournalView() {
   const ready = loadedDay === day && section === "journal"
   useEffect(() => {
     editor?.setEditable(ready)
+    if (editor && !ready) exitSuggestion(editor.view, slashPluginKey)
   }, [editor, ready])
+
+  useEffect(() => () => {
+    if (editor && !editor.isDestroyed) exitSuggestion(editor.view, slashPluginKey)
+  }, [editor])
 
   // Invalidate asynchronous work on every context exit, including away-and-back navigation.
   useEffect(() => {
@@ -322,8 +330,7 @@ export function JournalView() {
   if (section !== "journal") return null
 
   return (
-    <main aria-busy={!ready} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-5">
+    <SectionLayout width="workspace" aria-busy={!ready}>
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" onClick={() => shiftDay(-1)} aria-label="Previous day">
           <ChevronLeft />
@@ -399,74 +406,79 @@ export function JournalView() {
           />
         </div>
       ) : (
-      <>
-      <div className="glass mt-3 flex flex-col gap-2 rounded-2xl px-4 py-3">
-        <RatingRow
-          disabled={!ready}
-          label="Mood"
-          value={mood}
-          onChange={(v) => {
-            setMood(v)
-            if (editor) scheduleSave(editor, true, { mood: v })
-          }}
-        />
-        <RatingRow
-          disabled={!ready}
-          label="Energy"
-          value={energy}
-          onChange={(v) => {
-            setEnergy(v)
-            if (editor) scheduleSave(editor, true, { energy: v })
-          }}
-        />
-      </div>
-      <div className="glass mt-3 rounded-2xl px-5 py-4">
-        <EditorContent editor={editor} />
-      </div>
-
-      {assistView && (
-        <div className="glass mt-3 rounded-2xl border border-primary/30 px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Wand2 className="size-4 text-primary" />
-            <h3 className="text-sm font-semibold capitalize">AI {assistView}</h3>
-            {assist.pending && <Sparkles className="size-3 animate-pulse text-primary" />}
-            {!assist.pending && assist.error && (
-              <span className="text-xs text-destructive">{assist.error}</span>
-            )}
-            <div className="ml-auto flex items-center gap-2">
-              <Button variant="outline" size="xs" disabled={assist.pending} onClick={discardAssist}>
-                <X /> Discard
-              </Button>
-              <Button variant="outline" size="xs" disabled={assist.pending || !assist.text?.trim()} onClick={acceptAssist}>
-                <Check /> Accept
-              </Button>
+      <div className="mt-3 grid min-w-0 items-start gap-6 @5xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
+        <div className="min-w-0">
+          <div className="glass rounded-2xl px-5 py-4">
+            <div className="mx-auto max-w-[82ch] min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">
+              <EditorContent editor={editor} />
             </div>
           </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed opacity-90">
-            {assist.text?.trim() || <span className="text-muted-foreground">Working on your entry…</span>}
-          </p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 pb-8 text-xs">
+            <Button variant="outline" size="xs" disabled={!ready} onClick={() => void insertActivity()}>
+              <ListChecks /> Day activity
+            </Button>
+            <Button variant="outline" size="xs" disabled={!ready} onClick={insertTemplate}>
+              <Sparkles /> Reflection template
+            </Button>
+            {entry.data && (
+              <span className="ml-auto text-muted-foreground">
+                {entry.data.tasks_done}/{entry.data.tasks_planned || "–"} tasks ·{" "}
+                {formatDuration(Math.round(entry.data.hours_deep_work * 60))} focus
+              </span>
+            )}
+          </div>
         </div>
-      )}
+        <aside aria-label="Journal reflection" className="min-w-0 [overflow-wrap:anywhere]">
+          <div className="glass mt-3 flex flex-col gap-2 rounded-2xl px-4 py-3">
+            <RatingRow
+              disabled={!ready}
+              label="Mood"
+              value={mood}
+              onChange={(v) => {
+                setMood(v)
+                if (editor) scheduleSave(editor, true, { mood: v })
+              }}
+            />
+            <RatingRow
+              disabled={!ready}
+              label="Energy"
+              value={energy}
+              onChange={(v) => {
+                setEnergy(v)
+                if (editor) scheduleSave(editor, true, { energy: v })
+              }}
+            />
+          </div>
+          {assistView && (
+            <div className="glass mt-3 rounded-2xl border border-primary/30 px-5 py-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Wand2 className="size-4 text-primary" />
+                <h3 className="text-sm font-semibold capitalize">AI {assistView}</h3>
+                {assist.pending && <Sparkles className="size-3 animate-pulse text-primary" />}
+                {!assist.pending && assist.error && (
+                  <span className="text-xs text-destructive">{assist.error}</span>
+                )}
+                <div className="ml-auto flex items-center gap-2">
+                  <Button variant="outline" size="xs" disabled={assist.pending} onClick={discardAssist}>
+                    <X /> Discard
+                  </Button>
+                  <Button variant="outline" size="xs" disabled={assist.pending || !assist.text?.trim()} onClick={acceptAssist}>
+                    <Check /> Accept
+                  </Button>
+                </div>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed opacity-90">
+                {assist.text?.trim() || <span className="text-muted-foreground">Working on your entry…</span>}
+              </p>
+            </div>
+          )}
 
-      <DailyReviewCard day={day} />
+          <DailyReviewCard day={day} />
 
-      <div className="mt-3 flex items-center gap-2 pb-8 text-xs">
-        <Button variant="outline" size="xs" disabled={!ready} onClick={() => void insertActivity()}>
-          <ListChecks /> Day activity
-        </Button>
-        <Button variant="outline" size="xs" disabled={!ready} onClick={insertTemplate}>
-          <Sparkles /> Reflection template
-        </Button>
-        {entry.data && (
-          <span className="ml-auto text-muted-foreground">
-            {entry.data.tasks_done}/{entry.data.tasks_planned || "–"} tasks ·{" "}
-            {formatDuration(Math.round(entry.data.hours_deep_work * 60))} focus
-          </span>
-        )}
+        </aside>
       </div>
-      </>
       )}
-    </div>
-  </main>
+  </SectionLayout>
   )
 }

@@ -1,3 +1,4 @@
+import { SectionLayout } from "@/components/section-layout"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Brain, BookOpen, CalendarRange, MessageCircleQuestion, RotateCcw, Search, Send } from "lucide-react"
 import { Input } from "@/components/ui/input"
@@ -27,7 +28,7 @@ function Excerpt({ text, query }: { text: string; query: string }) {
   }, [text, query])
 
   return (
-    <p className="text-sm leading-relaxed text-muted-foreground">
+    <p className="max-w-[72ch] text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
       {parts.map((part, i) =>
         i % 2 === 1 ? (
           <mark key={i} className="rounded-sm bg-primary/30 px-0.5 text-foreground">
@@ -76,7 +77,7 @@ function AnswerText({ text, sources }: { text: string; sources?: CitationSource[
   const setSection = useUi((s) => s.setSection)
 
   return (
-    <p className="whitespace-pre-wrap text-sm leading-relaxed">
+    <p className="max-w-[72ch] whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
       {parts.map((part, i) => {
         const match = part.match(/^\[(\d+)\]$/)
         if (!match) return <span key={i}>{part}</span>
@@ -107,13 +108,13 @@ function ChatBubble({ message, isLast, pending }: { message: ChatMessage; isLast
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary/20 px-3.5 py-2 text-sm">{message.content}</div>
+        <div className="max-w-[72ch] [overflow-wrap:anywhere] rounded-2xl rounded-br-md bg-primary/20 px-3.5 py-2 text-sm">{message.content}</div>
       </div>
     )
   }
   const streaming = isLast && pending
   return (
-    <div className="max-w-[95%] space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       {message.content ? (
         <AnswerText text={message.content} sources={message.sources} />
       ) : (
@@ -174,9 +175,8 @@ export function SecondBrain() {
   }
 
   return (
-    <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pt-5">
-        <div className="flex items-center gap-3">
+    <SectionLayout width="workspace">
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">Second brain</h1>
           <div className="flex items-center rounded-full border border-border/60 p-0.5 text-xs">
             <button
@@ -247,17 +247,17 @@ export function SecondBrain() {
             )}
           </div>
         ) : (
-          <div className="mt-4 space-y-2 pb-8">
+          <div className="mt-4 grid items-start gap-3 pb-8 @3xl:grid-cols-2">
             {query.length < 2 ? (
-              <p className="pt-16 text-center text-sm text-muted-foreground">
+              <p className="col-span-full pt-16 text-center text-sm text-muted-foreground">
                 Search across your journals, weekly rollups and monthly reviews.
               </p>
             ) : results.isError ? (
-              <p className="pt-16 text-center text-sm text-destructive">Search failed — is the backend running?</p>
+              <p className="col-span-full pt-16 text-center text-sm text-destructive">Search failed — is the backend running?</p>
             ) : results.isPending ? (
-              <p className="pt-16 text-center text-sm text-muted-foreground">Searching…</p>
+              <p className="col-span-full pt-16 text-center text-sm text-muted-foreground">Searching…</p>
             ) : (results.data ?? []).length === 0 ? (
-              <p className="pt-16 text-center text-sm text-muted-foreground">Nothing found for “{query}”.</p>
+              <p className="col-span-full pt-16 text-center text-sm text-muted-foreground">Nothing found for “{query}”.</p>
             ) : (
               (results.data ?? []).map((hit) => {
                 const meta = KIND_META[hit.kind]
@@ -266,14 +266,14 @@ export function SecondBrain() {
                     key={hit.doc_id}
                     onClick={() => openHit(hit)}
                     className={cn(
-                      "glass block w-full rounded-xl px-4 py-3 text-left transition-all",
+                      "glass block min-w-0 w-full rounded-xl px-4 py-3 text-left transition-all",
                       hit.kind === "journal" ? "hover:ring-1 hover:ring-primary/40" : "cursor-default",
                     )}
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       <meta.icon className="size-3.5 shrink-0 text-muted-foreground" />
                       <span className="truncate text-sm font-medium">{hit.title}</span>
-                      <Badge variant="outline" className="ml-auto text-[10px] text-muted-foreground">
+                      <Badge variant="outline" className="ml-auto shrink-0 text-[10px] text-muted-foreground">
                         {meta.label}
                         {hit.sources.includes("semantic") && " · ✨ semantic"}
                       </Badge>
@@ -287,7 +287,6 @@ export function SecondBrain() {
             )}
           </div>
         )}
-      </div>
-    </main>
+    </SectionLayout>
   )
 }

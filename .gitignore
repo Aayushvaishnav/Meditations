@@ -52,6 +52,7 @@ Thumbs.db
 
 .nobs/
 plan.md
+features/
 
 # PyInstaller sidecar output (built by scripts/build-sidecar.sh / CI)
 frontend/src-tauri/binaries/

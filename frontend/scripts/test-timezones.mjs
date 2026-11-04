@@ -10,6 +10,15 @@ const tests = [
   "src/lib/task-deadlines.test.ts",
   "src/lib/time-blocks.test.ts",
   "src/lib/calendar-overlay.test.ts",
+  "src/lib/calendar-range.test.ts",
+  "src/lib/calendar-projection.test.ts",
+  "src/lib/calendar-time-grid.test.ts",
+  "src/lib/calendar-time-edit.test.ts",
+  "src/components/calendar/time-grid.test.tsx",
+  "src/components/calendar/year.test.tsx",
+  "src/components/calendar/time-edit.test.tsx",
+  "src/components/calendar-modes.test.tsx",
+  "src/components/calendar/deadline-move.test.tsx",
   "src/components/calendar-imported-overlay.test.tsx",
   "src/hooks/use-deadline-passed.test.ts",
   "src/components/quick-add.test.tsx",
@@ -20,9 +29,9 @@ const tests = [
   "src/stores/timer.test.ts",
   "src/components/focus-timer.test.tsx",
 ]
-for (const timezone of ["UTC", "Asia/Kolkata", "America/New_York", "Pacific/Kiritimati", "America/Sao_Paulo", "Pacific/Apia"]) {
+for (const timezone of ["UTC", "Asia/Kolkata", "America/New_York", "Pacific/Kiritimati", "America/Sao_Paulo", "Pacific/Apia", "Australia/Lord_Howe"]) {
   console.log(`\nTimezone: ${timezone}`)
-  const result = spawnSync(process.execPath, [vitest, "run", ...tests], {
+  const result = spawnSync(process.execPath, [vitest, "run", "--maxWorkers=4", ...tests], {
     cwd: root,
     env: { ...process.env, TZ: timezone },
     stdio: "inherit",

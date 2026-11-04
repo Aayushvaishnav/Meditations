@@ -78,11 +78,24 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  act(() => vi.advanceTimersByTime(1))
   vi.clearAllTimers()
   vi.useRealTimers()
 })
 
 describe("journal debounced saves", () => {
+  it("keeps the editor and frozen pending save through sidebar preference changes", () => {
+    mount()
+    const editor = mocks.editor
+    edit("Draft before collapsing")
+    act(() => useUi.getState().setSidebar("collapsed"))
+    expect(mocks.editor).toBe(editor)
+    expect(document.querySelector(".tiptap")!.textContent).toBe("Draft before collapsing")
+    act(() => useUi.getState().setSidebar("expanded"))
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }))
+    expect(mocks.mutate).toHaveBeenCalledExactlyOnceWith({ day: "2026-10-20", raw_markdown: "Draft before collapsing", mood: null, energy: null })
+  })
+
   it.each(["B", ""])("persists final content after editing to %j and undoing", (text) => {
     mount()
     edit(text)
@@ -282,5 +295,120 @@ describe("journal lifecycle", () => {
     advance()
     expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ day: "2026-10-20", raw_markdown: expect.stringContaining("Latest thoughts") }))
     expect(document.querySelector(".tiptap")!.textContent).toContain("Completed task")
+  })
+})
+
+// Suggestions resolve asynchronously; stub layout, not the editor or plugin.
+async function openSlashMenu(query = "") {
+  const editor = mocks.editor!
+  vi.spyOn(editor.view, "coordsAtPos").mockReturnValue({ left: 20, right: 20, top: 20, bottom: 40 })
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    editor.commands.insertContent(` /${query}`)
+  })
+  expect((screen.getByRole("listbox") as HTMLElement).hidden).toBe(false)
+  return editor
+}
+
+describe("journal slash menu lifecycle", () => {
+  const originalBounds = HTMLElement.prototype.getBoundingClientRect
+  let restoreBounds: () => void
+
+  beforeEach(() => {
+    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const editor = document.querySelector(".tiptap")
+      if (editor && (this === editor || this.contains(editor))) return new DOMRect(10, 10, 900, 600)
+      if (editor?.contains(this)) return new DOMRect(20, 20, 100, 20)
+      return originalBounds.call(this)
+    })
+    restoreBounds = () => bounds.mockRestore()
+  })
+
+  afterEach(() => restoreBounds())
+
+  it.each(["click", "Enter"])("applies the hovered command once with %s and saves the result", async (activation) => {
+    mount()
+    const editor = await openSlashMenu("head")
+    const textbox = screen.getByRole("textbox", { name: "Journal entry" })
+    const menu = screen.getByRole("listbox")
+    expect(textbox.getAttribute("aria-controls")).toBe(menu.id)
+    const option = screen.getByRole("option", { name: /Heading 2/ })
+    fireEvent.pointerMove(option)
+    expect(textbox.getAttribute("aria-activedescendant")).toBe(option.id)
+    await act(async () => {
+      if (activation === "click") fireEvent.click(option)
+      else fireEvent.keyDown(textbox, { key: "Enter" })
+    })
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(editor.isActive("heading", { level: 2 })).toBe(true)
+    expect(editor.getText().trim()).toBe("A")
+    advance()
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ day: "2026-10-20", raw_markdown: expect.stringMatching(/^## A\s*$/) }))
+  })
+
+  it("dismisses with Escape while preserving the query and continued typing", async () => {
+    mount()
+    const editor = await openSlashMenu("head")
+    const text = editor.getText()
+    fireEvent.keyDown(editor.view.dom, { key: "Escape" })
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(editor.getText()).toBe(text)
+    await act(async () => { editor.commands.insertContent("ing") })
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(editor.getText()).toBe(`${text}ing`)
+    advance()
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ raw_markdown: expect.stringContaining("/heading") }))
+  })
+
+  it("opens a fresh suggestion after Escape", async () => {
+    mount()
+    const editor = await openSlashMenu("head")
+    fireEvent.keyDown(editor.view.dom, { key: "Escape" })
+    await act(async () => { editor.commands.insertContent(" /quote") })
+    expect((screen.getByRole("listbox") as HTMLElement).hidden).toBe(false)
+    expect(screen.getByRole("option", { name: /Quote/ })).toBeTruthy()
+    expect(editor.getText()).toContain("/head /quote")
+  })
+
+  it("cleans up on day navigation and allows a fresh suggestion", async () => {
+    mocks.entries["2026-10-21"] = { raw_markdown: "Next entry", mood: null, energy: null }
+    mount()
+    await openSlashMenu("head")
+    fireEvent.click(screen.getByRole("button", { name: "Next day" }))
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(mocks.editor!.getText()).toBe("Next entry")
+    expect(mocks.mutate).toHaveBeenLastCalledWith(expect.objectContaining({ day: "2026-10-20", raw_markdown: expect.stringContaining("/head") }))
+    await openSlashMenu("quote")
+    expect(screen.getAllByRole("listbox")).toHaveLength(1)
+    expect(screen.getByRole("option", { name: /Quote/ })).toBeTruthy()
+  })
+
+  it("cleans up on section changes without losing text or restoring a stale popup", async () => {
+    mount()
+    const editor = await openSlashMenu("head")
+    const text = editor.getText()
+    act(() => useUi.setState({ section: "tasks" }))
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(editor.getText()).toBe(text)
+    act(() => useUi.setState({ section: "journal" }))
+    expect(screen.queryByRole("listbox")).toBeNull()
+    await act(async () => { editor.commands.insertContent("ing") })
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(editor.getText()).toBe(`${text}ing`)
+  })
+
+  it.each(["destroy", "unmount"])("removes the popup on editor %s", async (leave) => {
+    const view = mount()
+    const editor = await openSlashMenu("head")
+    if (leave === "destroy") act(() => editor.destroy())
+    else {
+      view.unmount()
+      act(() => vi.advanceTimersByTime(1))
+    }
+    expect(editor.isDestroyed).toBe(true)
+    expect(screen.queryByRole("listbox")).toBeNull()
+    expect(document.querySelector(".slash-menu")).toBeNull()
+    await act(async () => { vi.advanceTimersByTime(700) })
+    expect(screen.queryByRole("listbox")).toBeNull()
   })
 })

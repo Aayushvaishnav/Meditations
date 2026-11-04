@@ -2,6 +2,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
 export type MainView = "list" | "board" | "calendar"
+export type CalendarMode = "year" | "month" | "week" | "agenda" | "multi-day" | "multi-week"
 export type Theme = "dark" | "light" | "tokyo-night" | "rose-pine" | "gruvbox" | "dracula" | "nord" | "ayu"
 export type SmartView = "today" | "overdue" | "upcoming" | "all" | "completed"
 export type Section = "tasks" | "journal" | "second_brain" | "insights" | "settings"
@@ -21,7 +22,11 @@ export type Scope = { kind: "smart"; id: SmartView } | { kind: "list"; id: strin
 
 interface UiState {
   section: Section
+  sidebar: "expanded" | "collapsed"
+  setSidebar: (sidebar: "expanded" | "collapsed") => void
   view: MainView
+  calendarMode: CalendarMode
+  setCalendarMode: (mode: CalendarMode) => void
   scope: Scope
   search: string
   /** consumed once by the journal view when arriving from Second Brain */
@@ -44,8 +49,12 @@ interface UiState {
 export const useUi = create<UiState>()(
   persist(
     (set) => ({
+      sidebar: "expanded",
+      setSidebar: (sidebar) => set({ sidebar }),
       section: "tasks",
       view: "list",
+      calendarMode: "month",
+      setCalendarMode: (calendarMode) => set({ calendarMode }),
       scope: { kind: "smart", id: "today" },
       search: "",
       journalDay: null,
@@ -63,7 +72,7 @@ export const useUi = create<UiState>()(
     }),
     {
       name: "journal-ui",
-      partialize: (s) => ({ section: s.section, view: s.view, scope: s.scope, theme: s.theme }),
+      partialize: (s) => ({ sidebar: s.sidebar, section: s.section, view: s.view, calendarMode: s.calendarMode, scope: s.scope, theme: s.theme }),
     },
   ),
 )

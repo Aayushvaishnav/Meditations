@@ -55,7 +55,7 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="flex h-dvh overflow-hidden text-foreground">
+      <div className="flex h-dvh flex-col overflow-hidden text-foreground md:flex-row">
         <Sidebar />
         <Suspense key={section} fallback={<SectionLoading section={section} />}>
           {section === "journal" ? (
@@ -67,7 +67,7 @@ export default function App() {
           ) : section === "settings" ? (
             <SettingsView />
           ) : (
-            <main className="flex min-w-0 flex-1 flex-col">
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
               <Header />
               <QuickAdd />
               {view === "list" && !tasks.isError && scope.kind === "smart" && scope.id === "today" && <BriefingCard />}
