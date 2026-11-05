@@ -114,7 +114,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
       </DndContext>
 
       <Dialog open={openDay !== null} onOpenChange={(o) => !o && setOpenDay(null)}>
-        <DialogContent className="w-[28rem] max-w-[calc(100vw-2rem)]">
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[28rem] max-w-[calc(100vw-2rem)] flex-col">
           <DialogHeader>
             <DialogTitle>
               {openDay?.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
@@ -130,7 +130,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
             className="mt-2"
           />
           </label>
-          <div className="mt-2 max-h-[60dvh] space-y-2 overflow-y-auto overflow-x-hidden">
+          <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden">
             {openDay && imported.filter(event => importedEventOnDay(event, openDay)).map(event => <ImportedEventDetails key={event.id} event={event} />)}
             {openDay && live.filter(event => importedEventOnDay(event, openDay)).map(event => <LiveEventDetails key={event.id} event={event} />)}
             {openDay && blocks.filter(block => blockOnDay(block, openDay)).map(block => (

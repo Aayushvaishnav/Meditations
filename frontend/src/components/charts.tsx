@@ -7,11 +7,13 @@ export interface Point {
 /** Minimal SVG line chart with a soft area fill; 0..1 domain, theme-aware. */
 export function LineChart({
   points,
+  label,
   height = 140,
   color = "var(--color-primary)",
   showGrid = true,
 }: {
   points: Point[]
+  label: string
   height?: number
   color?: string
   showGrid?: boolean
@@ -25,7 +27,7 @@ export function LineChart({
   }
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" role="img">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" role="img" aria-label={label}>
       {showGrid && (
         <>
           <line x1={pad} x2={width - pad} y1={pad} y2={pad} stroke="var(--glass-border)" strokeDasharray="4 4" />
@@ -63,11 +65,13 @@ export function LineChart({
 /** Minimal SVG bar chart; values in 0..1 relative to `max`. */
 export function BarsChart({
   values,
+  label,
   max,
   height = 120,
   targetRatio,
 }: {
   values: number[]
+  label: string
   max: number
   height?: number
   targetRatio?: number
@@ -81,7 +85,7 @@ export function BarsChart({
   const barWidth = (width - pad * 2 - gap * (values.length - 1)) / values.length
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" role="img">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full" preserveAspectRatio="none" role="img" aria-label={label}>
       {targetRatio !== undefined && (
         <line
           x1={pad}

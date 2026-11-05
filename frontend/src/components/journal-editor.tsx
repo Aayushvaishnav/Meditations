@@ -188,6 +188,8 @@ export function JournalView() {
   }, [queryClient])
 
   const ready = loadedDay === day && section === "journal"
+  const loadFailed = !ready && entry.isError && !entry.isFetching
+  const loading = !ready && !loadFailed
   useEffect(() => {
     editor?.setEditable(ready)
     if (editor && !ready) exitSuggestion(editor.view, slashPluginKey)
@@ -326,7 +328,7 @@ export function JournalView() {
   if (section !== "journal") return null
 
   return (
-    <SectionLayout width="workspace" aria-busy={!ready}>
+    <SectionLayout width="workspace" aria-busy={loading}>
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" onClick={() => shiftDay(-1)} aria-label="Previous day">
           <ChevronLeft />
@@ -407,6 +409,19 @@ export function JournalView() {
       <div className="mt-3 grid min-w-0 items-start gap-6 @5xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
         <div className="min-w-0">
           <div className="journal-writing-surface glass rounded-2xl px-5 py-4">
+            {loading && (
+              <p role="status" aria-label="Loading journal entry" className="mb-3 text-sm text-muted-foreground">
+                Loading journal entry…
+              </p>
+            )}
+            {loadFailed && (
+              <div role="alert" className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+                <p>Couldn't load journal entry.</p>
+                <Button variant="outline" size="sm" onClick={() => void entry.refetch()}>
+                  Retry loading entry
+                </Button>
+              </div>
+            )}
             {editor && <FormattingToolbar key={`${day}:${ready}`} editor={editor} />}
             {editor && ready && <SelectionToolbar key={day} editor={editor} />}
             <div className="mx-auto max-w-[82ch] min-w-0 [overflow-wrap:anywhere] [&_pre]:max-w-full [&_pre]:overflow-x-auto">

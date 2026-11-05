@@ -1,38 +1,18 @@
-import { AlertCircle } from "lucide-react"
 import { MotionConfig } from "framer-motion"
 import { FocusTimer } from "@/components/focus-timer"
-import { Header } from "@/components/header"
-import { BriefingCard } from "@/components/briefing-card"
-import { CalendarView } from "@/components/calendar-view"
 import { CommandPalette } from "@/components/command-palette"
-import { EisenhowerMatrix } from "@/components/eisenhower-matrix"
-import { KanbanBoard } from "@/components/kanban-board"
-import { QuickAdd } from "@/components/quick-add"
 import { Sidebar } from "@/components/sidebar"
-import { TaskSections } from "@/components/task-sections"
-import { KanbanSkeleton, TaskListSkeleton } from "@/components/skeletons"
-import { useLists, useTasks, useResumeCalendarReconciliation } from "@/hooks/api"
+import { useResumeCalendarReconciliation } from "@/hooks/api"
 import { THEMES, useUi } from "@/stores/ui"
 import { lazy, Suspense, useEffect } from "react"
 import { SectionLoading } from "@/components/section-loading"
-import { Button } from "@/components/ui/button"
+import { TasksView } from "@/components/tasks-view"
+import { MatrixSection } from "@/components/matrix-section"
 
 const JournalView = lazy(() => import("@/components/journal-editor").then((m) => ({ default: m.JournalView })))
 const InsightsView = lazy(() => import("@/components/insights").then((m) => ({ default: m.InsightsView })))
 const SecondBrain = lazy(() => import("@/components/second-brain").then((m) => ({ default: m.SecondBrain })))
 const SettingsView = lazy(() => import("@/components/settings").then((m) => ({ default: m.SettingsView })))
-
-function TasksErrorBanner({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div className="flex flex-col items-center gap-3 pt-24 text-center text-muted-foreground">
-      <AlertCircle className="size-8 text-destructive" />
-      <p className="text-sm">Can't reach the API. Is the backend running on port 8000?</p>
-      <Button variant="outline" size="sm" onClick={onRetry}>
-        Retry
-      </Button>
-    </div>
-  )
-}
 
 export default function App() {
   const theme = useUi((s) => s.theme)
@@ -47,11 +27,6 @@ export default function App() {
   }, [theme])
 
   const section = useUi((s) => s.section)
-  const view = useUi((s) => s.view)
-  const scope = useUi((s) => s.scope)
-  const search = useUi((s) => s.search)
-  const tasks = useTasks()
-  const lists = useLists()
   useResumeCalendarReconciliation() // app resume triggers one calendar reconciliation pass
 
   return (
@@ -67,31 +42,10 @@ export default function App() {
             <InsightsView />
           ) : section === "settings" ? (
             <SettingsView />
+          ) : section === "matrix" ? (
+            <MatrixSection />
           ) : (
-            <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <Header />
-              <QuickAdd />
-              {view === "list" && !tasks.isError && scope.kind === "smart" && scope.id === "today" && <BriefingCard />}
-              <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-                {tasks.isError ? (
-                  <TasksErrorBanner onRetry={() => void tasks.refetch()} />
-                ) : tasks.isLoading ? (
-                  view === "board" ? (
-                    <KanbanSkeleton />
-                  ) : (
-                    <TaskListSkeleton />
-                  )
-                ) : view === "calendar" ? (
-                  <CalendarView tasks={tasks.data ?? []} scope={scope} search={search} />
-                ) : view === "matrix" ? (
-                  <EisenhowerMatrix tasks={tasks.data ?? []} lists={lists.data ?? []} scope={scope} search={search} />
-                ) : view === "board" ? (
-                  <KanbanBoard tasks={tasks.data ?? []} search={search} />
-                ) : (
-                  <TaskSections tasks={tasks.data ?? []} scope={scope} search={search} lists={lists.data ?? []} />
-                )}
-              </div>
-            </main>
+            <TasksView />
           )}
         </Suspense>
         <FocusTimer />

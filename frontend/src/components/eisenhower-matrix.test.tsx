@@ -44,6 +44,12 @@ it("places tasks in all five regions and describes partial classifications", () 
   expect(screen.getByText("Classification: importance unassigned, urgent")).toBeTruthy()
 })
 
+it("exposes quadrant task counts as readable text", () => {
+  render(view([task("unclassified")]))
+  const region = within(screen.getByRole("region", { name: "Unclassified" }))
+  expect(region.getByText((_text, element) => element?.textContent === "1 task")).toBeTruthy()
+})
+
 it("filters scope and search while rendering a matching subtask exactly once without nesting", () => {
   render(view([task("parent", { tags: [] }), task("child", { title: "Review child", parent_id: "parent" }),
     task("other", { title: "Review other", list_id: "other" }), task("done", { title: "Review done", status: "completed" })],

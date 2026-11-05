@@ -3,6 +3,7 @@ import type { Section } from "@/stores/ui"
 
 const SECTION_LABELS: Record<Section, string> = {
   tasks: "tasks",
+  matrix: "Eisenhower Matrix",
   journal: "journal",
   insights: "insights",
   second_brain: "Second Brain",

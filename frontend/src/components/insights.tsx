@@ -53,22 +53,44 @@ export function InsightsView() {
   const [period, setPeriod] = useState<(typeof PERIODS)[number]>(30)
   const data = useInsights(period, true)
 
+  const header = (
+    <div className="flex items-center gap-3">
+      <h1 className="text-xl font-semibold tracking-tight">Insights</h1>
+      <div className="glass ml-auto flex items-center gap-0.5 rounded-lg p-0.5">
+        {PERIODS.map((p) => (
+          <button
+            key={p}
+            aria-pressed={period === p}
+            onClick={() => setPeriod(p)}
+            className={cn(
+              "rounded-md px-2.5 py-1 text-xs transition-colors",
+              period === p ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {p}d
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+
   if (data.isError) {
     return (
       <SectionLayout width="workspace">
-          <p className="pt-16 text-center text-sm text-destructive">Couldn't load insights — is the backend running?</p>
-        </SectionLayout>
+        {header}
+        <p className="pt-16 text-center text-sm text-destructive">Couldn't load insights — is the backend running?</p>
+      </SectionLayout>
     )
   }
 
   if (data.isLoading) {
     return (
       <SectionLayout width="workspace">
-          <h1 className="text-xl font-semibold tracking-tight">Insights</h1>
-          <div className="mt-4">
-            <InsightsSkeleton />
-          </div>
-        </SectionLayout>
+        {header}
+        <div className="mt-4">
+          <InsightsSkeleton />
+        </div>
+      </SectionLayout>
     )
   }
 
@@ -92,23 +114,7 @@ export function InsightsView() {
 
   return (
     <SectionLayout width="workspace">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold tracking-tight">Insights</h1>
-        <div className="glass ml-auto flex items-center gap-0.5 rounded-lg p-0.5">
-          {PERIODS.map((p) => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={cn(
-                "rounded-md px-2.5 py-1 text-xs transition-colors",
-                period === p ? "bg-primary/20 text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {p}d
-            </button>
-          ))}
-        </div>
-      </div>
+      {header}
 
       {/* stat row */}
       <div className="mt-4 grid grid-cols-1 gap-3 @sm:grid-cols-2 @3xl:grid-cols-4">
@@ -145,7 +151,7 @@ export function InsightsView() {
           0.40·tasks + 0.35·focus + 0.15·habits + AI nudge (plan §3.4); AI-reviewed days include the ±10 nudge
         </p>
         <div className="mt-2">
-          <LineChart points={scorePoints} />
+          <LineChart label={`Daily scores over ${period} days`} points={scorePoints} />
         </div>
         <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
           <span>{series[0]?.date}</span>
@@ -158,7 +164,7 @@ export function InsightsView() {
         <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="text-sm font-semibold">Deep work per day</h2>
           <div className="mt-2">
-            <BarsChart values={focusPoints} max={maxFocus} targetRatio={targetHours / maxFocus} />
+            <BarsChart label={`Daily focus hours over ${period} days`} values={focusPoints} max={maxFocus} targetRatio={targetHours / maxFocus} />
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">dashed line = daily target</p>
         </div>
@@ -167,7 +173,7 @@ export function InsightsView() {
         <div className="glass min-w-0 rounded-2xl p-4">
           <h2 className="text-sm font-semibold">Mood</h2>
           <div className="mt-2">
-              <LineChart points={moodPoints} color="var(--positive)" showGrid={false} />
+              <LineChart label={`Daily mood over ${period} days`} points={moodPoints} color="var(--positive)" showGrid={false} />
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">from journal entries (1–5)</p>
         </div>

@@ -381,6 +381,42 @@ all recursive `imports` when comparing initial bytes. These are build
 measurements, not network latency guarantees. The entry and Journal chunks
 still exceed Vite's 500 KB advisory threshold; it is not suppressed.
 
+### 6.0.1 Navigation, section widths and calendar source controls (NAV-01 / LAY-01 / CAL-01)
+
+Desktop navigation has a persisted `expanded | collapsed` preference in the
+`journal-ui` store; older preferences default to expanded. The collapsed state
+is an icon rail with the app icon, named destinations and a Lists flyout.
+The app icon remains visible in both desktop sidebar states. List creation uses
+an explicit form; list deletion requires confirmation and keeps tasks. Settings
+is a footer outside the scrolling navigation region. Below 768px, navigation
+uses a modal drawer without changing the desktop preference. Closing the drawer
+restores its trigger; crossing the breakpoint transfers navigation focus to a
+visible control. Changing sidebar width does not remount the selected section.
+
+`SectionLayout` owns the section scrollbar and provides explicit `workspace`
+(90rem maximum) and `reading` (80ch maximum) variants. Journal, Insights and
+Second Brain use workspace width, including lazy-loading and error states.
+Container queries adapt charts/results to available content width. Journal
+keeps its editor near 82ch, with ratings/review/assist alongside on wide
+containers and below on smaller ones; its calendar uses the workspace width.
+Second Brain answer prose stays near 72ch. Its Ask/Search input has an explicit
+mode-specific accessible name and retains the shared visible keyboard-focus ring.
+Journal citations and search hits remain navigation buttons; weekly/monthly
+rollup sources render as descriptive text instead of inert controls.
+Insights keeps its period controls mounted through query loading/error states,
+exposes the selected period with `aria-pressed`, and names each chart by metric
+and period. These layout changes preserve the existing frozen-save and empty-day
+contracts.
+
+The task calendar presents a closed-by-default **Calendar sources** disclosure
+with a compact selected-source/error/stale summary. Imported/live query owners
+remain mounted outside its visibility boundary: closing controls preserves
+selection, polling and visible appointments. Each Calendar mount starts with
+both overlays hidden; range navigation and implemented calendar-mode switches preserve explicit
+selections. Setup, authentication and sync management remain in Settings. External
+events remain read-only, use independent query families and do not affect task
+filters or scores. All six calendar modes share this source-selection contract.
+
 ### 6.1 Feature Module 1: The TickTick-Grade Task Engine
 1. **Quick-Add Parsing Bar**:
    - Parses date, time, recurring patterns, tags, priority, and target list simultaneously.
@@ -395,7 +431,7 @@ still exceed Vite's 500 KB advisory threshold; it is not suppressed.
 2. **Multi-View Modes**:
    - **List View**: Grouped by Today, Upcoming, Overdue, or custom tag/list.
    - **Kanban Board**: Drag-and-drop between lists or statuses (`To Do`, `In Progress`, `Done`).
-   - **Interactive Calendar**: Six-week month grid of task deadlines; drag between days to reschedule. Task-linked work blocks render independently with timed ranges or all-day labels; drag or the day dialog reschedules blocks without changing deadlines.
+   - **Interactive Calendar**: Month uses a six-week Monday-start grid; Agenda groups 14 local calendar days with separate all-day and timed items. Week and configurable Multi-Day use a shared time grid with separate all-day items and due-time flags. Drag between days or use explicit date actions to reschedule deadlines. Task-linked work blocks render independently with actual timed ranges or all-day labels; moving a block leaves its task deadline unchanged.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
@@ -421,17 +457,28 @@ described below.
 
 #### Eisenhower matrix (features/MAT-02)
 
-Matrix is a persisted task view beside List, Board and Calendar, available from
-both the header and command menu. `lib/eisenhower.ts` owns pure classification
-mapping and deterministic ordering. It reuses the shared scope/title/tag selector:
-active scopes exclude completed/canceled tasks; Completed shows completed tasks;
-list scopes keep their selected list. Matching subtasks appear independently once,
+Matrix is a persisted top-level section, separate from Tasks, available from
+the sidebar (including the collapsed rail and mobile drawer) and command menu.
+Tasks offers only List, Board and Calendar; entering Matrix leaves the saved
+task view and scope unchanged, so returning to Tasks restores both. Matrix
+shows all active tasks independently of the selected Tasks scope and uses the
+shared title/tag filter. Its header has no Tasks view switcher.
+`matrix-section.tsx` and `tasks-view.tsx` own their sections;
+`task-query-boundary.tsx` shares loading, error and retry behavior over the
+canonical tasks cache. Persisted legacy `view: matrix` preferences migrate to
+the Matrix section with List as the Tasks default, retaining other section
+selections when Matrix was not visible. `lib/eisenhower.ts` owns pure classification
+mapping and deterministic ordering. It reuses the shared title/tag selector with
+an All tasks scope that excludes completed/canceled tasks. Matching subtasks appear independently once,
 with parent context, instead of being recursively repeated beneath parents.
 
 The desktop grid orders Urgent & important, Not urgent & important, Urgent & not
 important, then Not urgent & not important. Narrow windows use a labeled vertical
 stack. A separate Unclassified tray holds tasks with either dimension unassigned;
 partial states remain visible and can be completed independently or reset.
+The four quadrants use distinct red, blue, amber and green surfaces with
+high-contrast matching text and borders in light and dark themes; Unclassified
+remains neutral. Labels communicate classification independently of color.
 
 Dedicated dnd-kit pointer handles and native Move to quadrant selectors submit
 both classification dimensions atomically through the existing task update hook.
@@ -442,13 +489,99 @@ pending move blocks a second classification edit on that task. Keyboard focus
 returns after final placement or rollback unless the person moved to another
 control. Existing TaskItem menus/completion remain shared and visible on touch.
 
-Each zone has a task-creation form with explicit classification and the selected
-list where applicable; Unclassified creates both dimensions unassigned. Smart
-scopes do not invent deadlines or completed status, so a new task appears only
-when it matches the current scope/search. Failed creates retain their draft;
+Each zone has a task-creation form with explicit classification; Unclassified
+creates both dimensions unassigned. Matrix-created tasks do not inherit the
+Tasks section's selected list or scope. New tasks appear when they match the
+current search. Failed creates retain their draft;
 success does not clear a different draft typed while the request was pending.
 Matrix shares the task query loading/error/retry boundary and adds empty,
 pending-move and failed-move feedback. No dependency or backend contract changed.
+
+#### Calendar display modes (features/CAL-02, CAL-03, CAL-04)
+
+`CalendarMode` is separate from the Tasks List/Board/Calendar view. Month is
+the default for older preferences; Year, Month, Week, Agenda, Multi-Day and Multi-Week
+are selectable and persisted in `journal-ui`. Matrix is
+a separate section instead of a task view or calendar mode.
+
+`calendar-view.tsx` orchestrates scoped tasks, mutations, source owners and day
+details. Dedicated `components/calendar/` modules own Year, Month, Agenda, Multi-Week,
+shared day cells and time grids, explicit time-edit forms and toolbar; `lib/calendar-range.ts` centralizes local calendar-day ranges and
+navigation. Month exports its calendar month, excluding adjacent padding cells;
+Agenda displays and exports the 14-day window starting at the anchor. Previous
+and next preserve the anchor's day where possible (clamping shorter months).
+Mode changes retain the anchor date, task scope/search and selected sources.
+Month keeps its seven-column grid at a minimum readable width inside a named,
+keyboard-focusable horizontal scroll region. Narrow windows scroll the calendar
+canvas instead of reducing event-title space to zero; section vertical scrolling
+and day details remain independent. Day-detail dialogs fit within the dynamic
+viewport with a 1rem margin; their item/edit list owns the remaining scroll space
+so the heading, close control and new-task field remain reachable at browser zoom.
+
+`lib/calendar-projection.ts` preserves distinct deadline, local-block,
+imported-event and live-event identities and editability. Source intervals remain
+authoritative, including floating clocks and exclusive all-day ends; unplaced
+source records stay in labeled source details. Agenda distinguishes item kinds,
+all-day items and deterministic timed ordering. Undated tasks have no calendar
+placement but remain available in ordinary task views. Export includes only local
+work blocks belonging to the filtered tasks and overlapping the displayed range;
+selected blocks export their complete intervals, never external appointments.
+
+Week spans Monday through Sunday. Multi-Day starts at the shared anchor and
+initially spans three days, with an explicit 2–7-day selector retained within the
+Calendar mount. Previous/next moves seven days or the selected day count using
+calendar-date arithmetic. Both export the displayed range and retain source,
+scope and search selections across mode changes.
+
+Year displays twelve responsive Monday-start mini-months using their actual
+4/5/6-week rows. Day shading represents eligible visible item density (1, 2–3,
+4+), rather than scores; a spanning interval counts on each overlapping day.
+Accessible day labels and shared day details expose exact total and per-kind
+counts. Today and the anchor date have distinct states. Each mini-month has one
+roving day tab stop with arrow navigation; Enter/Space use native button
+activation to open details, updating the shared anchor. Month headings drill down
+to Month, preserving the selected date for the anchor's month. Year navigation
+moves one year and clamps leap-day anchors when necessary. Mini-months do not
+provide drag targets.
+
+Multi-Week reuses Month's day-cell grid, overflow, source distinctions, task/block
+drag moves and day details. It starts Monday, defaults to two weeks and supports
+2–6 weeks; the chosen count lives within the Calendar mount, independently from
+Multi-Day's count. Previous/next advances by that many calendar weeks. Day cells
+include month labels; shared dialogs include the year for boundary crossings.
+Narrow windows use scoped horizontal scrolling around a readable seven-column
+grid. Year exports its full calendar year; Multi-Week exports its displayed weeks,
+using the same filtered local-block eligibility as the other modes.
+
+`lib/calendar-time-grid.ts` clips actual timed intervals to local midnight
+boundaries and assigns deterministic overlap columns per connected component.
+The hour ruler is wall-clock based: spring gaps remain visible; intervals crossing
+a fall-back fold that cannot be represented safely remain in labeled interval
+details. Timed deadlines and zero-length external events use instant flags,
+instead of acquiring durations. Floating source events retain source-clock labels
+in a separate details section. All-day intervals retain exclusive ends. Every day
+has a Details action exposing complete titles, source labels and existing date
+moves, including short intervals and crowded flags. External items stay read-only.
+The time grid owns scoped horizontal scrolling, with a pinned hour ruler; task
+section vertical scrolling remains separate. The task `<main>` is shrinkable on
+narrow stacked shells so its scrolling child remains reachable.
+
+Day details provide explicit local datetime forms for timed task deadlines and
+work blocks. `lib/calendar-time-edit.ts` requires exact civil-time roundtrips,
+rejects nonexistent local times, requires an earlier/later choice for newly edited
+ambiguous times, and preserves unchanged original instants and subminute precision.
+JavaScript Date exposes no offset-transition enumeration; candidate lookup samples
+the surrounding ±24-hour offset regimes at minute resolution, then validates every
+candidate against the full civil value (including historical offset seconds).
+Block time edits preserve linked task identity and saved timezone metadata while
+using the explicitly chosen end; they never update task deadlines. Existing date
+moves keep their established DST semantics: block gaps are rejected and folds use
+the earlier occurrence, while deadline date moves use Date's normalization.
+Time-slot dragging and resizing remain outside this release.
+
+The frontend timezone script includes the six baseline zones plus
+`Australia/Lord_Howe` for half-hour DST gaps and folds, including the new range,
+time-grid and explicit-time-edit suites.
 
 #### Calendar, date, and timer contracts (QA-04)
 
@@ -1020,8 +1153,10 @@ complete-feed assumptions, recovery, credential handling and implementation gate
 1. **TipTap Markdown Block Editor**:
    - Clean typographical hierarchy with Notion-style slash commands (`/h1`, `/task`, `/quote`, `/callout`).
    - Saves use a 700 ms debounce with the day, markdown, mood, and energy frozen at schedule time. Undoing to the loaded text replaces queued content while preserving current ratings.
-   - Loading stored markdown suppresses editor update events. The editor, ratings, and content-insertion buttons stay disabled until the selected day's entry resolves; the journal surface exposes its busy state. Visiting an empty day creates no entry; every day switch (including Today and search-result navigation), section exit, and editor unmount flushes queued changes to their original day.
+   - Loading stored markdown suppresses editor update events. The editor, ratings, and content-insertion buttons stay disabled until the selected day's entry resolves; the journal surface exposes its busy state. A settled initial-load failure clears busy state and shows an alert with query retry while editing stays locked. A 404 resolves as an empty day; failed background refetches do not lock already-loaded content or replace an unsaved draft. Visiting an empty day creates no entry; every day switch (including Today and search-result navigation), section exit, and editor unmount flushes queued changes to their original day.
    - Activity insertion belongs to the active editor lifecycle: changing days, leaving the journal, or unmounting invalidates pending results, even after returning to the same day. Same-day results append to the latest text rather than overwriting edits made during the request. Slash-extension callbacks dispatch through current handlers because ProseMirror retains the initially configured callbacks.
+   - Slash command definitions live in `components/slash-command.tsx`; `components/journal/slash-menu.ts` owns popup DOM, active selection, geometry and cleanup. Pointer hover and arrow keys share selection; keyboard navigation preserves rows and reveals the active option. Click/tap or Enter invokes a command once while retaining editor focus. Escape exits suggestion state without changing journal text.
+   - The fixed slash popup recalculates its anchor on captured ancestor scrolling, viewport changes and ancestor `ResizeObserver` notifications. It flips and constrains its dimensions to available viewport space; missing or clipped anchors hide it. Listbox/options and editor active-descendant attributes expose selection. Day/section transitions, unmount and suggestion exit remove the popup and its subscriptions.
    - External `journalDay` is a one-shot navigation command and is consumed even when that day is already selected.
    - JRN-02 writing controls live in `components/journal/formatting-toolbar.tsx`; the full group offers paragraph/headings 1–6, bold/italic/strike, inline code, bullet/ordered/task lists, quote/code blocks, links and undo/redo. Active toggles compose; Clear formatting removes inline marks only from a nonempty selection, preserving block/list structure. Paragraph conversion is a separate block-style action. Pointer actions preserve selection; native controls retain keyboard access, with larger coarse-pointer targets.
    - `components/journal/selection-toolbar.tsx` uses TipTap v3's BubbleMenu with a fixed body portal, clipping-aware virtual selection geometry, viewport flipping/shifting and event/observer-driven repositioning for scrolling, sidebar and content resizing. It hides on composition, empty selection, outside focus or Escape; a new selection clears Escape dismissal. Day/editor-context changes unregister the plugin and subscriptions. Full writing controls remain available independently of the popup.

@@ -48,29 +48,26 @@ function SourceRow({ source }: { source: CitationSource }) {
   const meta = KIND_META[source.kind]
   const clickable = source.kind === "journal"
 
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        if (!clickable) return
-        setJournalDay(source.date)
-        setSection("journal")
-      }}
-      className={cn(
-        "flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground",
-        clickable ? "hover:bg-primary/10 hover:text-foreground" : "cursor-default",
-      )}
-    >
-      <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[9px] font-semibold text-primary">
-        {source.n}
-      </span>
-      <meta.icon className="size-3 shrink-0" />
-      <span className="truncate">{source.title}</span>
-    </button>
+  const className = cn(
+    "flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground",
+    clickable && "hover:bg-primary/10 hover:text-foreground",
   )
+  const content = <>
+    <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[9px] font-semibold text-primary">
+      {source.n}
+    </span>
+    <meta.icon className="size-3 shrink-0" />
+    <span className="truncate">{source.title}</span>
+    <span className="sr-only">({meta.label})</span>
+  </>
+  if (!clickable) return <span className={className}>{content}</span>
+  return <button type="button" className={className} onClick={() => {
+    setJournalDay(source.date)
+    setSection("journal")
+  }}>{content}</button>
 }
 
-/** Renders [n] citation markers as clickable chips that mirror the source list. */
+/** Citation chips; journal sources open their entry */
 function AnswerText({ text, sources }: { text: string; sources?: CitationSource[] }) {
   const parts = useMemo(() => text.split(/(\[\d+\])/g), [text])
   const jumpTo = useUi((s) => s.setJournalDay)
@@ -84,17 +81,23 @@ function AnswerText({ text, sources }: { text: string; sources?: CitationSource[
         const n = Number(match[1])
         const source = sources?.find((s) => s.n === n)
         if (!source) return <span key={i}>{part}</span>
+        const title = `${source.title} (${KIND_META[source.kind].label})`
+        const className = "mx-0.5 inline-flex size-4.5 items-center justify-center rounded-full bg-primary/20 align-middle text-[9px] font-semibold text-primary"
+        if (source.kind !== "journal") return <span key={i} title={title} className={className}>
+          <span aria-hidden="true">{n}</span>
+          <span className="sr-only">Citation {n}: {title}</span>
+        </span>
         return (
           <button
             key={i}
             type="button"
             onClick={() => {
-              if (source.kind !== "journal") return
               jumpTo(source.date)
               setSection("journal")
             }}
-            title={`${source.title} (${KIND_META[source.kind].label})`}
-            className="mx-0.5 inline-flex size-4.5 items-center justify-center rounded-full bg-primary/20 align-middle text-[9px] font-semibold text-primary hover:bg-primary/30"
+            title={title}
+            aria-label={`Open citation ${n}: ${title}`}
+            className={cn(className, "hover:bg-primary/30")}
           >
             {n}
           </button>
@@ -207,6 +210,7 @@ export function SecondBrain() {
           <Brain className="size-4 shrink-0 text-primary" />
           <Input
             autoFocus
+            aria-label={mode === "ask" ? "Ask your journals" : "Search your journals"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -216,7 +220,7 @@ export function SecondBrain() {
               }
             }}
             placeholder={mode === "ask" ? "Ask your journals a question…" : "Keyword search across everything…"}
-            className="h-9 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 dark:bg-transparent"
+            className="h-9 border-0 bg-transparent px-0 shadow-none dark:bg-transparent"
           />
           {mode === "ask" && chat.messages.length > 0 && (
             <Button variant="ghost" size="icon-xs" aria-label="New conversation" onClick={chat.reset}>
@@ -261,28 +265,26 @@ export function SecondBrain() {
             ) : (
               (results.data ?? []).map((hit) => {
                 const meta = KIND_META[hit.kind]
-                return (
-                  <button
-                    key={hit.doc_id}
-                    onClick={() => openHit(hit)}
-                    className={cn(
-                      "glass block min-w-0 w-full rounded-xl px-4 py-3 text-left transition-all",
-                      hit.kind === "journal" ? "hover:ring-1 hover:ring-primary/40" : "cursor-default",
-                    )}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <meta.icon className="size-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate text-sm font-medium">{hit.title}</span>
-                      <Badge variant="outline" className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                        {meta.label}
-                        {hit.sources.includes("semantic") && " · ✨ semantic"}
-                      </Badge>
-                    </div>
-                    <div className="mt-1.5">
-                      <Excerpt text={hit.excerpt} query={query} />
-                    </div>
-                  </button>
+                const className = cn(
+                  "glass block min-w-0 w-full rounded-xl px-4 py-3 text-left transition-all",
+                  hit.kind === "journal" && "hover:ring-1 hover:ring-primary/40",
                 )
+                const content = <>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <meta.icon className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate text-sm font-medium">{hit.title}</span>
+                    <Badge variant="outline" className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {meta.label}
+                      {hit.sources.includes("semantic") && " · ✨ semantic"}
+                    </Badge>
+                  </div>
+                  <div className="mt-1.5">
+                    <Excerpt text={hit.excerpt} query={query} />
+                  </div>
+                </>
+                return hit.kind === "journal"
+                  ? <button key={hit.doc_id} onClick={() => openHit(hit)} className={className}>{content}</button>
+                  : <div key={hit.doc_id} className={className}>{content}</div>
               })
             )}
           </div>

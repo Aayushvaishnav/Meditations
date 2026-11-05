@@ -15,11 +15,12 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView")
 })
 
-it("opens Matrix from the command menu while retaining the selected task scope", () => {
+it.each(["board", "calendar"] as const)("opens Matrix from the command menu while retaining the selected task scope and %s view", (view) => {
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() })
-  useUi.setState({ section: "journal", view: "list", paletteOpen: true, scope: { kind: "list", id: "work" } })
+  useUi.setState({ section: "journal", view, search: "draft", paletteOpen: true, scope: { kind: "list", id: "work" } })
   render(<CommandPalette />)
+  expect(screen.getByRole("option", { name: /Eisenhower Matrix/ })).toBeTruthy()
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "Matrix" } })
   fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" })
-  expect(useUi.getState()).toMatchObject({ section: "tasks", view: "matrix", scope: { kind: "list", id: "work" }, paletteOpen: false })
+  expect(useUi.getState()).toMatchObject({ section: "matrix", view, search: "draft", scope: { kind: "list", id: "work" }, paletteOpen: false })
 })

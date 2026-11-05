@@ -51,6 +51,29 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe("CAL-02 calendar modes", () => {
+  it("requires fresh source opt-in after remount while retaining the chosen calendar mode", () => {
+    const first = render(view())
+    sources()
+    for (const name of ["Imported calendar", "Live calendar"]) {
+      expect((screen.getByLabelText(name) as HTMLSelectElement).value).toBe("")
+    }
+    sources()
+    selectSources()
+    mode("agenda")
+    expect(screen.getByText("Dentist")).toBeTruthy()
+    expect(screen.getByText("Remote meeting")).toBeTruthy()
+
+    first.unmount()
+    render(view())
+    expect(useUi.getState().calendarMode).toBe("agenda")
+    expect(screen.queryByText("Dentist")).toBeNull()
+    expect(screen.queryByText("Remote meeting")).toBeNull()
+    sources()
+    for (const name of ["Imported calendar", "Live calendar"]) {
+      expect((screen.getByLabelText(name) as HTMLSelectElement).value).toBe("")
+    }
+  })
+
   it("offers all six implemented modes and switches from a six-week month to fourteen days anchored on today", () => {
     render(view())
     expect(days()).toHaveLength(42)

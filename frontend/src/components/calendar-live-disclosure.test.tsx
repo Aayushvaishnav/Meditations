@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CalendarView } from "./calendar-view"
 import { calendarInboundKey } from "@/hooks/calendar-inbound"
+import { useUi } from "@/stores/ui"
 import type { InboundOverlay } from "@/api/calendar-inbound-types"
 
 const overlayPath = "/calendar/connections/c1/inbound/overlay"
@@ -23,6 +24,7 @@ const disclosure = () => screen.getByRole("button", { name: "Calendar sources" }
 const chips = (summary = "Live appointment") => screen.queryAllByRole("button").filter(button => button.textContent === `${summary}Mirrored`)
 
 beforeEach(() => {
+  useUi.setState(useUi.getInitialState())
   vi.useFakeTimers({ toFake: ["Date"] })
   vi.setSystemTime(new Date(2026, 2, 8, 12))
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -35,7 +37,7 @@ beforeEach(() => {
   })
   vi.stubGlobal("fetch", fetcher)
 })
-afterEach(() => { cleanup(); client.clear(); vi.unstubAllGlobals(); vi.useRealTimers() })
+afterEach(() => { cleanup(); client.clear(); useUi.setState(useUi.getInitialState()); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 async function selectLiveCalendar() {
   render(<QueryClientProvider client={client}><CalendarView tasks={[]} scope={{ kind: "smart", id: "all" }} search="" /></QueryClientProvider>)
@@ -49,6 +51,31 @@ async function selectLiveCalendar() {
 }
 
 describe("live calendar sources disclosure with real query hooks", () => {
+  it("keeps all calendar modes usable with no configured sources and makes no overlay requests", async () => {
+    routes["/calendar/connections"] = () => []
+    render(<QueryClientProvider client={client}><CalendarView tasks={[]} scope={{ kind: "smart", id: "all" }} search="" /></QueryClientProvider>)
+    fireEvent.click(disclosure())
+    await screen.findByText("Import an .ics file in Settings to add an overlay.")
+    await screen.findByText("Connect a calendar in Settings to mirror its events here.")
+    for (const name of ["Imported calendar", "Live calendar"]) {
+      const selector = screen.getByRole("combobox", { name }) as HTMLSelectElement
+      expect(selector.value).toBe("")
+      expect(selector.options).toHaveLength(1)
+    }
+    fireEvent.click(disclosure())
+    const selector = screen.getByRole("combobox", { name: "Calendar mode" })
+    for (const mode of ["year", "month", "week", "agenda", "multi-day", "multi-week"]) {
+      fireEvent.change(selector, { target: { value: mode } })
+      expect((selector as HTMLSelectElement).value).toBe(mode)
+      const day = screen.getByRole("button", { name: mode === "year" ? /^2026-03-08, 0 items:/ : "Add task on 2026-03-08" })
+      day.focus()
+      expect(document.activeElement).toBe(day)
+      expect(day.hasAttribute("disabled")).toBe(false)
+      expect(screen.getByText(/Imported hidden.*Live hidden/)).toBeTruthy()
+    }
+    expect(fetcher.mock.calls.some(([url]) => String(url).includes("/overlay"))).toBe(false)
+  })
+
   it("keeps its query owner and polling active while controls are closed", async () => {
     // Enable interval timers before mounting so React Query schedules a controllable poll
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] })

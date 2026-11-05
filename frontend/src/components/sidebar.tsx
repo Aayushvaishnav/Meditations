@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { BookOpen, Brain, CalendarClock, CalendarDays, CheckCircle2, Folder, Inbox, ListTodo, Menu, PanelLeftClose, PanelLeftOpen, Plus, Settings, TrendingUp, X } from "lucide-react"
+import { BookOpen, Brain, CalendarClock, CalendarDays, CheckCircle2, Folder, Grid2X2, Inbox, ListTodo, Menu, PanelLeftClose, PanelLeftOpen, Plus, Settings, TrendingUp, X } from "lucide-react"
 import { useUi, type SmartView } from "@/stores/ui"
 import { useCreateList, useDeleteList, useHealth, useLists, useTasks } from "@/hooks/api"
 import { groupOf } from "@/lib/dates"
@@ -97,6 +97,7 @@ function Navigation({ collapsed, onNavigate }: { collapsed: boolean; onNavigate:
     <nav aria-label="Main navigation" className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-1">
       {([{ id: "journal", label: "Journal", icon: BookOpen }, { id: "second_brain", label: "Second brain", icon: Brain }, { id: "insights", label: "Insights", icon: TrendingUp }] as const).map(({ id, label, icon: Icon }) =>
         <ScopeButton key={id} active={section === id} label={label} collapsed={collapsed} icon={<Icon className="size-4 shrink-0" />} onClick={() => { setSection(id); onNavigate() }} />)}
+      <ScopeButton active={section === "matrix"} label="Eisenhower Matrix" collapsed={collapsed} icon={<Grid2X2 className="size-4 shrink-0" />} onClick={() => { setSection("matrix"); onNavigate() }} />
       <div className="my-3 border-t border-border" />
       {SMART_VIEWS.map(({ id, label, icon: Icon }) => <ScopeButton key={id} active={section === "tasks" && scope.kind === "smart" && scope.id === id} label={label} collapsed={collapsed} icon={<Icon className="size-4 shrink-0" />} count={counts.smart[id]} onClick={() => { setScope({ kind: "smart", id }); onNavigate() }} />)}
       <div className="my-3 border-t border-border" />
@@ -134,7 +135,8 @@ export function Sidebar() {
   return <>
     <aside ref={desktopRef} aria-label="Sidebar" className={cn("glass hidden shrink-0 flex-col gap-3 border-r border-border p-2 md:flex", collapsed ? "w-16" : "w-60")}>
       <div className={cn("flex items-center gap-2 p-1", collapsed && "flex-col")}>
-        {!collapsed && <><img src="/favicon.svg" alt="" draggable={false} className="size-7" /><span className="flex-1 text-sm font-semibold">Meditations</span></>}
+        <img src="/favicon.svg" alt="Meditations" draggable={false} className="size-7 shrink-0" />
+        {!collapsed && <span className="flex-1 text-sm font-semibold">Meditations</span>}
         <ConnectionStatus />
         <Tooltip><TooltipTrigger render={<Button variant="ghost" size="icon-sm" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} onClick={() => setSidebar(collapsed ? "expanded" : "collapsed")} />}>{collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}</TooltipTrigger><TooltipContent side="right">{collapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent></Tooltip>
       </div>

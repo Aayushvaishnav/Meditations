@@ -22,6 +22,49 @@ afterEach(() => { cleanup(); localStorage.clear(); vi.unstubAllGlobals() })
 const desktop = () => within(screen.getByRole("complementary", { name: "Sidebar" }))
 
 describe("sidebar navigation", () => {
+  it("keeps the app icon visible when collapsed and after expanding", () => {
+    render(<Sidebar />)
+    const icon = () => desktop().getByRole("img", { name: "Meditations" })
+    expect(icon().getAttribute("src")).toBe("/favicon.svg")
+    fireEvent.click(desktop().getByRole("button", { name: "Collapse sidebar" }))
+    expect(icon()).toBeTruthy()
+    fireEvent.click(desktop().getByRole("button", { name: "Expand sidebar" }))
+    expect(icon()).toBeTruthy()
+  })
+  it.each(["expanded", "collapsed"] as const)("opens Matrix from the %s sidebar while retaining task scope and search", (sidebar) => {
+    useUi.setState({ sidebar, section: "journal", view: "list", scope: { kind: "list", id: "work" }, search: "draft" })
+    render(<Sidebar />)
+    const shortcut = desktop().getByRole("button", { name: "Eisenhower Matrix" })
+    expect(shortcut.hasAttribute("aria-current")).toBe(false)
+    fireEvent.click(shortcut)
+    expect(useUi.getState()).toMatchObject({ section: "matrix", view: "list", scope: { kind: "list", id: "work" }, search: "draft" })
+    expect(shortcut.getAttribute("aria-current")).toBe("page")
+    fireEvent.click(desktop().getByRole("button", { name: "Journal" }))
+    expect(shortcut.hasAttribute("aria-current")).toBe(false)
+  })
+  it("opens Matrix from the mobile drawer and closes navigation", async () => {
+    useUi.setState({ section: "insights", view: "board" })
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole("button", { name: "Open navigation" }))
+    const drawer = await screen.findByRole("dialog", { name: "Navigation" })
+    fireEvent.click(within(drawer).getByRole("button", { name: "Eisenhower Matrix" }))
+    expect(useUi.getState()).toMatchObject({ section: "matrix", view: "board" })
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Navigation" })).toBeNull())
+  })
+  it.each(["board", "calendar"] as const)("restores %s after Matrix through task destinations", (view) => {
+    useUi.setState({ section: "tasks", view, scope: { kind: "list", id: "work" }, search: "draft" })
+    render(<Sidebar />)
+    for (const [label, scope] of [
+      ["Today", { kind: "smart", id: "today" }],
+      ["All tasks", { kind: "smart", id: "all" }],
+      ["Work", { kind: "list", id: "work" }],
+    ] as const) {
+      fireEvent.click(desktop().getByRole("button", { name: "Eisenhower Matrix" }))
+      expect(useUi.getState()).toMatchObject({ section: "matrix", view, search: "draft" })
+      fireEvent.click(desktop().getByRole("button", { name: label }))
+      expect(useUi.getState()).toMatchObject({ section: "tasks", view, scope, search: "draft" })
+    }
+  })
   it("persists collapse without changing section, task scope, or search", async () => {
     useUi.setState({ section: "journal", scope: { kind: "list", id: "work" }, search: "draft" })
     render(<Sidebar />)
