@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from dataclasses import dataclass
+from enum import Enum, auto
 
 import sqlite_vec
 from sqlalchemy import text
 from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.embedding_worker import run_embedding, shutdown_embedding_worker
 from app.models import JournalEntry, MonthlySummary, WeeklySummary
 
 EMBED_DIM = 384  # bge-small-en-v1.5
@@ -40,6 +43,15 @@ logger = logging.getLogger(__name__)
 
 _vec_ready = False
 _model = None
+
+
+async def shutdown_embeddings() -> None:
+    """Drain inference before releasing the cached model and worker threads."""
+    global _model
+    try:
+        await shutdown_embedding_worker()
+    finally:
+        _model = None
 
 
 def vec_available() -> bool:
@@ -79,12 +91,29 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     return [vec.tolist() for vec in model.embed(truncated)]
 
 
-def _optional_embeddings(texts: list[str]) -> list[list[float]] | None:
+class EmbeddingAvailability(Enum):
+    AVAILABLE = auto()
+    UNAVAILABLE = auto()
+
+
+@dataclass
+class EmbeddingPass:
+    availability: EmbeddingAvailability = EmbeddingAvailability.AVAILABLE
+
+
+async def _optional_embeddings(
+    texts: list[str], embedding_pass: EmbeddingPass,
+) -> list[list[float]] | None:
+    if embedding_pass.availability is EmbeddingAvailability.UNAVAILABLE:
+        return None
     try:
-        return embed_texts(texts)
+        vectors = await run_embedding(lambda: embed_texts(texts))
     except Exception:  # noqa: BLE001 — optional inference must not disable FTS
         logger.warning("Semantic embeddings unavailable; using FTS only", exc_info=True)
-        return None
+        vectors = None
+    if vectors is None:
+        embedding_pass.availability = EmbeddingAvailability.UNAVAILABLE
+    return vectors
 
 
 def _serialize(vec: list[float]) -> bytes:
@@ -117,13 +146,16 @@ async def _execute(session: AsyncSession, sql: str, params: dict | None = None):
     return await session.execute(text(sql), params or {})
 
 
-async def index_document(session: AsyncSession, doc_id: str, kind: str, content: str) -> None:
+async def index_document(
+    session: AsyncSession, doc_id: str, kind: str, content: str,
+    *, embedding_pass: EmbeddingPass | None = None,
+) -> None:
     """Write indexes and vector freshness in the caller's source transaction."""
     await remove_document(session, doc_id)
     await _execute(session, "INSERT INTO fts_entries(content, kind, doc_id) VALUES (:c, :k, :d)", {"c": content, "k": kind, "d": doc_id})
     await _execute(session, "INSERT INTO search_vector_state(doc_id, state) VALUES (:d, 'pending')", {"d": doc_id})
     if _vec_ready:
-        vec = _optional_embeddings([content])
+        vec = await _optional_embeddings([content], embedding_pass if embedding_pass is not None else EmbeddingPass())
         if vec is not None:
             await _execute(session, "INSERT INTO vec_entries(doc_id, embedding) VALUES (:d, :e)", {"d": doc_id, "e": _serialize(vec[0])})
             await _execute(session, "UPDATE search_vector_state SET state = 'ready' WHERE doc_id = :d", {"d": doc_id})
@@ -189,8 +221,9 @@ async def reindex(session: AsyncSession) -> dict:
     if _vec_ready:
         await _execute(session, "DELETE FROM vec_entries")
     sources = await _source_documents(session)
+    embedding_pass = EmbeddingPass()
     for doc_id, kind, content in sources:
-        await index_document(session, doc_id, kind, content)
+        await index_document(session, doc_id, kind, content, embedding_pass=embedding_pass)
     ready = (await _execute(session, "SELECT 1 FROM search_vector_state WHERE state = 'ready' LIMIT 1")).first()
     await session.commit()
     return {"indexed": len(sources), "semantic": bool(_vec_ready and ready)}
@@ -214,13 +247,14 @@ async def backfill_missing(session: AsyncSession) -> int:
     for doc_id in orphans:
         await remove_document(session, doc_id)
     count = len(orphans)
+    embedding_pass = EmbeddingPass()
     for doc_id, kind, content in sources:
         if (
             indexed.get(doc_id) != [(kind, content)]
             or doc_id not in states
             or (_vec_ready and (states[doc_id] != "ready" or doc_id not in vectors))
         ):
-            await index_document(session, doc_id, kind, content)
+            await index_document(session, doc_id, kind, content, embedding_pass=embedding_pass)
             count += 1
     await session.commit()
     return count
@@ -247,7 +281,7 @@ async def search(session: AsyncSession, q: str, limit: int = 20) -> list[SearchH
 
     sem_hits: dict[str, int] = {}
     if _vec_ready:
-        vec = _optional_embeddings([q])
+        vec = await _optional_embeddings([q], EmbeddingPass())
         if vec is not None:
             rows = (
                 await _execute(
@@ -256,10 +290,20 @@ async def search(session: AsyncSession, q: str, limit: int = 20) -> list[SearchH
                     {"e": _serialize(vec[0]), "k": limit},
                 )
             ).all()
+            candidates = {f"doc_{i}": doc_id for i, (doc_id, _) in enumerate(rows)}
+            ready_ids: set[str] = set()
+            if candidates:
+                placeholders = ", ".join(f":{key}" for key in candidates)
+                ready_ids = set((await _execute(
+                    session,
+                    "SELECT doc_id FROM search_vector_state WHERE state = 'ready' "
+                    f"AND doc_id IN ({placeholders})",
+                    candidates,
+                )).scalars())
             for rank, (doc_id, distance) in enumerate(
                 sorted(rows, key=lambda r: r[1])
             ):
-                if distance <= SEMANTIC_MAX_DISTANCE:
+                if distance <= SEMANTIC_MAX_DISTANCE and doc_id in ready_ids:
                     sem_hits[doc_id] = rank
 
     # reciprocal-rank fusion

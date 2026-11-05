@@ -77,7 +77,12 @@ async def lifespan(application: FastAPI):
         try:
             await asyncio.gather(*workers, return_exceptions=True)
         finally:
-            await db.dispose_engine()
+            from app.search import shutdown_embeddings
+
+            try:
+                await shutdown_embeddings()
+            finally:
+                await db.dispose_engine()
 
 
 app = FastAPI(title="Journal API", version="0.1.0", lifespan=lifespan)
