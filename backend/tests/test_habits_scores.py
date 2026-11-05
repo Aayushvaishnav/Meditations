@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from app.util import utc_now
@@ -103,9 +105,8 @@ def test_daily_score_respects_target_hours_param(client):
 
 
 def test_overdue_task_counts_as_planned(client):
-    yesterday = "2026-09-09"
-    today = "2026-09-10"
-    # Created backdated via explicit due date; still open on `today`.
+    today = utc_now().date()
+    yesterday = today - timedelta(days=1)
     client.post("/api/tasks", json={"title": "Overdue", "due_date": f"{yesterday}T09:00:00Z"})
 
     body = client.get(f"/api/scores/daily/{today}").json()

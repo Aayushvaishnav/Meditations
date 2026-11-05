@@ -65,21 +65,31 @@ class InsightsResponse(SQLModel):
     totals: dict[str, float | int | None]
 
 
-def _streaks(journaled: set[dt.date], today: dt.date) -> tuple[int, int]:
-    """(current, best) consecutive-day journaling streaks."""
-    probe = today if today in journaled else today - dt.timedelta(days=1)
-    current = 0
-    while probe in journaled:
-        current += 1
-        probe -= dt.timedelta(days=1)
-
+def _streaks(completed_days: set[dt.date], today: dt.date) -> tuple[int, int]:
+    """Current and best consecutive-day streaks through today."""
     best = run = 0
     prev: dt.date | None = None
-    for day in sorted(journaled):
+    for day in sorted(completed_days):
         run = run + 1 if (prev is not None and (day - prev).days == 1) else 1
         best = max(best, run)
         prev = day
+    current = run if prev in (today, today - dt.timedelta(days=1)) else 0
     return current, best
+
+
+async def _journal_streaks(session: SessionDep, today: dt.date) -> tuple[int, int]:
+    rows = await session.stream(
+        select(JournalEntry.date, JournalEntry.raw_markdown, JournalEntry.mood, JournalEntry.energy)
+        .where(JournalEntry.date <= today)
+    )
+    journaled: set[dt.date] = set()
+    try:
+        async for day, markdown, mood, energy in rows:
+            if markdown.strip() or mood is not None or energy is not None:
+                journaled.add(day)
+    finally:
+        await rows.close()
+    return _streaks(journaled, today)
 
 
 async def _habit_insights(session: SessionDep, today: dt.date) -> list[HabitInsight]:
@@ -87,24 +97,27 @@ async def _habit_insights(session: SessionDep, today: dt.date) -> list[HabitInsi
     out: list[HabitInsight] = []
     month_ago = today - dt.timedelta(days=29)
     for habit in habits:
-        done = {
-            log.date
-            for log in (
+        done = set(
+            (
                 await session.exec(
-                    select(HabitLog).where(
+                    select(HabitLog.date).where(
                         HabitLog.habit_id == habit.id,
                         HabitLog.completed.is_(True),
-                        HabitLog.date >= month_ago,
+                        HabitLog.date <= today,
                     )
                 )
             ).all()
-        }
-        streak = 0
-        probe = today if today in done else today - dt.timedelta(days=1)
-        while probe in done:
-            streak += 1
-            probe -= dt.timedelta(days=1)
-        out.append(HabitInsight(id=habit.id, name=habit.name, current_streak=streak, rate_30=round(len(done) / 30, 3)))
+        )
+        streak, _ = _streaks(done, today)
+        completed_30 = sum(day >= month_ago for day in done)
+        out.append(
+            HabitInsight(
+                id=habit.id,
+                name=habit.name,
+                current_streak=streak,
+                rate_30=round(completed_30 / 30, 3),
+            )
+        )
     return out
 
 
@@ -115,15 +128,16 @@ async def insights(session: SessionDep, days: int = Query(default=30, ge=14, le=
     target_hours = await get_effective_target_hours(session)
 
     series: list[InsightDay] = []
-    journaled: set[dt.date] = set()
-    entries_by_date = {e.date: e for e in (await session.exec(select(JournalEntry).where(JournalEntry.date >= start - dt.timedelta(days=400)))).all()}
+    entries_by_date = {
+        e.date: e for e in (await session.exec(
+            select(JournalEntry).where(JournalEntry.date >= start, JournalEntry.date <= today)
+        )).all()
+    }
     scores_by_date = {s.date: s for s in (await session.exec(select(DailyScore).where(DailyScore.date >= start))).all()}
 
     for offset in range(days):
         day = start + dt.timedelta(days=offset)
         entry = entries_by_date.get(day)
-        if entry is not None and entry.raw_markdown.strip():
-            journaled.add(day)
         metrics = await collect_daily_metrics(session, day)
         stored = scores_by_date.get(day)
         score = stored.final_score if stored else compute_daily_score(metrics, target_hours=target_hours).weighted_score
@@ -141,7 +155,7 @@ async def insights(session: SessionDep, days: int = Query(default=30, ge=14, le=
             )
         )
 
-    streak_current, streak_best = _streaks(journaled, today)
+    streak_current, streak_best = await _journal_streaks(session, today)
 
     weekly = [
         WeeklyTrend(week_start=w.week_start, avg_score=w.avg_score, trend=w.trend)

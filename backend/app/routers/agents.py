@@ -246,7 +246,12 @@ async def rollup_weekly(session: SessionDep, week_start: dt.date | None = None):
         ).all()
     ][::-1]
     latest_monthly = (
-        await session.exec(select(MonthlySummary).order_by(MonthlySummary.month.desc()).limit(1))
+        await session.exec(
+            select(MonthlySummary)
+            .where(MonthlySummary.month < week_start.strftime("%Y-%m"))
+            .order_by(MonthlySummary.month.desc())
+            .limit(1)
+        )
     ).first()
 
     trend = trend_of(scores)

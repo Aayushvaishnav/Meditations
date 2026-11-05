@@ -17,8 +17,8 @@ import { PriorityBadge } from "@/components/priority-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SearchX } from "lucide-react"
-import { matchTaskSearch } from "@/lib/search"
-import { useUi } from "@/stores/ui"
+import { selectBoardTasks } from "@/lib/board"
+import { useUi, type Scope } from "@/stores/ui"
 import type { Task, TaskStatus } from "@/api/types"
 import { deadlineCutoff, formatDeadline } from "@/lib/task-deadlines"
 import { useUpdateTask } from "@/hooks/api"
@@ -135,7 +135,7 @@ function Column({ status, label, tasks, overflow }: { status: TaskStatus; label:
   )
 }
 
-export function KanbanBoard({ tasks, search = "" }: { tasks: Task[]; search?: string }) {
+export function KanbanBoard({ tasks, scope, search = "" }: { tasks: Task[]; scope: Scope; search?: string }) {
   const updateTask = useUpdateTask()
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -143,12 +143,11 @@ export function KanbanBoard({ tasks, search = "" }: { tasks: Task[]; search?: st
   )
   const [activeTask, setActiveTask] = useState<Task | null>(null)
 
-  const visible = useMemo(() => tasks.filter((t) => matchTaskSearch(t, search)), [tasks, search])
+  const visible = useMemo(() => selectBoardTasks(tasks, scope, search), [tasks, scope, search])
 
   const columns = useMemo(() => {
-    const topLevel = visible.filter((t) => t.parent_id === null)
     return COLUMNS.map((c) => {
-      const all = topLevel.filter((t) => t.status === c.status).sort(byOrder)
+      const all = visible.filter((t) => t.status === c.status).sort(byOrder)
       return {
         ...c,
         tasks: c.status === "completed" ? all.slice(0, DONE_CAP) : all,
@@ -158,24 +157,22 @@ export function KanbanBoard({ tasks, search = "" }: { tasks: Task[]; search?: st
   }, [visible])
 
   function onDragStart(event: DragStartEvent) {
-    setActiveTask(tasks.find((t) => t.id === event.active.id) ?? null)
+    setActiveTask(visible.find((t) => t.id === event.active.id) ?? null)
   }
 
   function onDragEnd(event: DragEndEvent) {
     setActiveTask(null)
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const activeTask = tasks.find((t) => t.id === active.id)
+    const activeTask = visible.find((t) => t.id === active.id)
     if (!activeTask) return
 
     const overData = over.data.current as { type?: string; status?: TaskStatus } | undefined
-    const targetStatus = overData?.type === "column" ? overData.status : tasks.find((t) => t.id === over.id)?.status
+    const targetStatus = overData?.type === "column" ? overData.status : visible.find((t) => t.id === over.id)?.status
     if (!targetStatus) return
 
-    // mirror what the user sees: order among the filtered, top-level cards in the target column
-    const columnTasks = visible
-      .filter((t) => t.status === targetStatus && t.parent_id === null && t.id !== activeTask.id)
-      .sort(byOrder)
+    const columnTasks = columns.find(column => column.status === targetStatus)!.tasks
+      .filter(task => task.id !== activeTask.id)
 
     let index = columnTasks.findIndex((t) => t.id === over.id)
     if (index === -1) index = columnTasks.length
@@ -191,7 +188,7 @@ export function KanbanBoard({ tasks, search = "" }: { tasks: Task[]; search?: st
 
   return (
     <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveTask(null)}>
-      {search && visible.filter((t) => t.parent_id === null).length === 0 ? (
+      {search && visible.length === 0 ? (
         <div className="flex flex-col items-center gap-2 pt-16 text-center text-muted-foreground">
           <SearchX className="size-7 text-muted-foreground/50" />
           <p className="text-sm">

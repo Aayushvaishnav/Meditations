@@ -80,7 +80,7 @@ The core problem of AI journaling is context bloat. As time progresses, feeding 
   * Maximum token footprint: ~4,000 tokens ($O(1)$).
   * Output: Qualitative feedback, identified cognitive blindspots, suggested wins/misses, and nudges.
 * **Weekly Agent Run** (Scheduled after Monday 00:00 UTC for the closed week):
-  * Inputs: 7 daily scores & structured metadata (tasks done, deep-work hours) + last 4 weekly summaries + latest monthly summary. **Raw daily journal text is never read again.**
+  * Inputs: 7 daily scores & structured metadata (tasks done, deep-work hours) + last 4 weekly summaries + latest monthly summary whose month is strictly before the requested week's start month. Manual reruns and scheduler catch-up use the same target-period boundary, not the current date; missing eligible monthly context is omitted. A week crossing a month/year boundary belongs to its start month, so its own parent monthly summary cannot feed back into regeneration. **Raw daily journal text is never read again.**
   * Output: Week rollup (average score, primary wins, friction points, carried-over habits).
 * **Monthly Agent Run** (Scheduled after the month's final Monday-owned week closes):
   * Inputs: 4–5 weekly summaries from the current month + last 2–3 monthly summaries.
@@ -223,8 +223,8 @@ calendar source-capture triggers; v12 adds sync acknowledgment times and explici
 link selection state; v13 adds independent import sources, original upload snapshots,
 and opaque event identities. v14 adds the webhook outbox; v15 adds calendar inbound
 reconciliation. v16 adds independent task importance and urgency with non-null
-`unassigned` defaults and allowed-state CHECK constraints. Fresh installations
-run all sixteen migrations.
+`unassigned` defaults and allowed-state CHECK constraints. v17 repairs historical
+JSON-null task tags to empty arrays. Fresh installations run all seventeen migrations.
 Existing unversioned installations adopt the baseline and then upgrade. An explicit SQLite
 `BEGIN IMMEDIATE` serializes startup writers; pending schema changes, backfills,
 and version updates commit together. A failed upgrade rolls back the pending
@@ -408,6 +408,18 @@ exposes the selected period with `aria-pressed`, and names each chart by metric
 and period. These layout changes preserve the existing frozen-save and empty-day
 contracts.
 
+Insights journal current/best streaks use all qualifying entry dates through the
+current UTC date, independently of the selected 14–90-day chart period. Text,
+mood-only and energy-only entries qualify, matching journal saves and calendar
+dots; whitespace-only unrated rows and future dates do not. Current streaks may
+end today or yesterday. Daily-habit current streaks likewise use all completed
+log dates through today. Habit `rate_30` remains completed days in the inclusive
+UTC interval `[today - 29 days, today]`, divided by 30; incomplete and future
+logs are excluded. Neither streak query imposes a historical day limit. Journal
+history is streamed as participation fields, while chart entry data stays bound
+to the selected period. This does not change score formulas, saved reviews or
+bounded AI context.
+
 The task calendar presents a closed-by-default **Calendar sources** disclosure
 with a compact selected-source/error/stale summary. Imported/live query owners
 remain mounted outside its visibility boundary: closing controls preserves
@@ -430,11 +442,22 @@ filters or scores. All six calendar modes share this source-selection contract.
      - Estimated duration: 45 minutes
 2. **Multi-View Modes**:
    - **List View**: Grouped by Today, Upcoming, Overdue, or custom tag/list.
-   - **Kanban Board**: Drag-and-drop between lists or statuses (`To Do`, `In Progress`, `Done`).
+   - **Kanban Board**: Drag-and-drop between statuses (`To Do`, `In Progress`, `Done`). The selected list or smart scope and title/tag search filter cards through the shared task selector. All and list scopes include their matching completed tasks in Done; Today (including overdue), Overdue and Upcoming show matching active tasks only; Completed shows Done only. Canceled tasks and subtasks are excluded. The Done column displays at most 30 matching cards after scope/search filtering and reports the remaining count. Drag ordering uses only displayed cards in the destination column; completion uses the shared task mutation and leaves list membership unchanged. `lib/board.ts` owns Board selection, while List/Calendar/Matrix retain their existing completed-task policy.
    - **Interactive Calendar**: Month uses a six-week Monday-start grid; Agenda groups 14 local calendar days with separate all-day and timed items. Week and configurable Multi-Day use a shared time grid with separate all-day items and due-time flags. Drag between days or use explicit date actions to reschedule deadlines. Task-linked work blocks render independently with actual timed ranges or all-day labels; moving a block leaves its task deadline unchanged.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
+
+#### Partial-update validation (features/REV-01)
+
+Task PATCH requests distinguish omission from explicit null: omitted fields stay
+unchanged; explicit null for `title`, `priority`, `status`, or `tags` returns 422
+before persistence. Nullable fields remain clearable, and `tags: []` is valid.
+List PATCH likewise rejects null `name`, `color`, and `is_favorite`, while allowing
+`icon` to be cleared. Settings null overrides retain their existing reset semantics.
+Schema v17 repairs historical JSON-null task tags to `[]`; SQL `NOT NULL` alone
+cannot reject JSON null. The migration preserves other task fields and timestamps,
+and uses the existing transactional migration and pre-upgrade checkpoint path.
 
 #### Task classification (features/MAT-01)
 
@@ -806,8 +829,15 @@ local-display distinction without inventing a persisted timezone.
 Daily scoring retains the timed-deadline planned-task rule. Date-only deadlines
 count on and after their label in the requested UTC report day, unless the task
 was completed before that day; canceled tasks remain excluded. Undated tasks
-count when completed that day. Live metrics may change on deadline edits, while
-saved reviews remain snapshots. AI capture with a date but no time creates a
+count when completed that day. All planned tasks MUST have `created_at` strictly
+before the requested UTC day's exclusive end; a task created at the next midnight
+or later cannot enter that day's planned count, even with an older deadline.
+Live historical metrics project current task fields backward within this creation
+boundary; later deadline/status edits or deletion can still change them. They do
+not reconstruct what the user actually planned at the time. Exact reconstruction
+would require a separate event-history or planning-snapshot design; neither is
+introduced here. Saved reviews remain snapshots until explicitly rerun. AI capture
+with a date but no time creates a
 date-only deadline; explicit times retain the existing server-local interpretation
 before UTC normalization. Briefing includes date-only due/overdue tasks using
 UTC day boundaries. Portable export v1 adds nullable `tasks.deadline_date` as an
@@ -843,7 +873,8 @@ Neither changes telemetry. Saved review scores remain snapshots until rerun.
 
 #### Completion-triggered recurrence identity
 
-`backend/app/recurring_tasks.py` owns task-series identity and successor creation;
+`backend/app/task_completion.py` owns the status transition shared by task POST
+and PATCH; `backend/app/recurring_tasks.py` owns task-series identity and successor creation;
 `recurrence.py` owns RRULE date arithmetic. This is separate from future calendar
 provider recurrence (SCHED-04). New explicit rule writes accept only `FREQ=DAILY`
 or `FREQ=WEEKLY`, positive integer `INTERVAL`, and unnumbered `BYDAY` only for
@@ -864,6 +895,13 @@ unchanged.
 - Non-recurring tasks have null identity fields until recurrence is enabled.
   Removing the rule stops regeneration but retains any existing identity;
   re-enabling recurrence resumes the same identity.
+- `POST /api/tasks` accepts `status=completed`. Creation stamps naive-UTC
+  `completed_at` and, for a recurring task, creates its open successor in the same
+  transaction. Successor failure rolls back the entire creation. Other creation
+  statuses have no completion timestamp or successor. PATCH stamps completion
+  only on entry into completed; repeated completed writes retain the timestamp,
+  and leaving completed clears it. A successful POST repeated by a client creates
+  a new task/series; occurrence uniqueness is not request-level idempotency.
 - Completion preserves the finished row and its focus/completion history. The
   successor copies task configuration, starts as todo with zero actual minutes,
   and shares the completion transaction. Timed deadlines retain their time;

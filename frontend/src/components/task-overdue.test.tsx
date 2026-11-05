@@ -33,7 +33,7 @@ function task(status: Task["status"] = "todo"): Task {
 }
 const views = {
   list: (t: Task) => <TaskItem task={t} subtasks={[]} lists={[]} />,
-  board: (t: Task) => <KanbanBoard tasks={[t]} />,
+  board: (t: Task) => <KanbanBoard tasks={[t]} scope={{ kind: "smart", id: "all" }} />,
   calendar: (t: Task) => <CalendarView tasks={[t]} scope={{ kind: "smart", id: "all" }} search="" />,
 }
 beforeEach(() => {

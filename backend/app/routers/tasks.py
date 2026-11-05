@@ -8,7 +8,8 @@ from sqlmodel import func, select
 
 from app.models import Task, TaskList
 from app.recurrence import TaskRecurrenceError
-from app.recurring_tasks import ensure_recurrence_identity, spawn_successor
+from app.recurring_tasks import ensure_recurrence_identity
+from app.task_completion import apply_task_status
 from app.routers.deps import SessionDep
 from app.schemas import TaskCreate, TaskReorder, TaskStatus, TaskUpdate, TaskResponse
 from app.task_deadlines import persistence_fields
@@ -100,10 +101,14 @@ async def create_task(payload: TaskCreate, session: SessionDep):
         raise HTTPException(status_code=404, detail="Parent task not found")
 
     data = persistence_fields(payload.model_dump(exclude_unset=True))
+    data.pop("status", None)
     data["order_index"] = await _next_order_index(session, payload.list_id, payload.parent_id)
     task = Task(**data)
-    ensure_recurrence_identity(task)
     session.add(task)
+    try:
+        await apply_task_status(session, task, payload.status, at=utc_now())
+    except TaskRecurrenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await session.commit()
     await session.refresh(task)
     return task
@@ -133,22 +138,16 @@ async def update_task(task_id: str, payload: TaskUpdate, session: SessionDep):
             raise HTTPException(status_code=404, detail="Parent task not found")
         await _ensure_no_cycle(session, task_id, changes["parent_id"])
 
-    new_status = changes.get("status")
-    completing = new_status == "completed" and task.status != "completed"
-    if new_status is not None:
-        if completing:
-            task.completed_at = utc_now()
-        elif new_status != "completed":
-            task.completed_at = None
-
+    new_status = changes.pop("status", None)
     for key, value in changes.items():
         setattr(task, key, value)
     task.updated_at = utc_now()
 
-    ensure_recurrence_identity(task)
-    if completing:
+    if new_status is None:
+        ensure_recurrence_identity(task)
+    else:
         try:
-            await spawn_successor(session, task)
+            await apply_task_status(session, task, new_status, at=utc_now())
         except TaskRecurrenceError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

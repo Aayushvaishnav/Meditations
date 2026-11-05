@@ -25,7 +25,7 @@ export function TasksView() {
           {tasks => view === "calendar"
             ? <CalendarView tasks={tasks} scope={scope} search={search} />
             : view === "board"
-              ? <KanbanBoard tasks={tasks} search={search} />
+              ? <KanbanBoard tasks={tasks} scope={scope} search={search} />
               : <TaskSections tasks={tasks} scope={scope} search={search} lists={lists.data ?? []} />}
         </TaskQueryBoundary>
       </div>

@@ -47,6 +47,12 @@ Natural-language capture, AI daily briefing ("Good morning — Top 3 for today")
 ### Tasks — Kanban Board
 Drag-and-drop task status workflow across To Do, In Progress, and Done, with integrated Pomodoro and Stopwatch focus timer.
 
+Choose a list or smart view in the sidebar to filter Board, then narrow it with
+Filter tasks. All tasks and custom lists keep their matching completed tasks in
+Done. Today, Overdue, and Upcoming show active tasks; Completed shows Done only.
+Board shows top-level tasks, with up to 30 matching Done cards and a count of older
+completed tasks. Use List to work with subtasks.
+
 ![Tasks Kanban Board](Assets/board.png)
 
 ### Tasks — Calendar View
@@ -66,6 +72,17 @@ Natural-language Q&A and semantic search across personal journals combining SQLi
 
 ### Insights & Telemetry Dashboard
 Telemetry dashboard featuring deterministic daily score trends, completion rates, deep work hours, mood charts, and habit streaks.
+
+Historical planned-task counts exclude tasks created after the report day ended
+(midnight UTC), even when their deadlines are backdated. Live counts use current
+task data, so later deadline edits, status changes, or deletions can still change
+them; they are not a record of your original plan. Saved reviews stay unchanged
+until you rerun them.
+
+Journal and daily-habit streaks use your full history, regardless of the chart period.
+Journal entries with text, a mood rating, or an energy rating count toward your streak.
+A current streak can end today or yesterday; future dates are excluded.
+Habit completion rates use the last 30 days, including today.
 
 ![Insights Dashboard](Assets/insights.png)
 

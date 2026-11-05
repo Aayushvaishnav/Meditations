@@ -2,9 +2,9 @@
 
 Deterministic semantics:
 - tasks_completed:  tasks whose completed_at falls within the day (UTC).
-- tasks_planned:    tasks that were on the plate that day: due before
-                    end-of-day (incl. overdue, still open) OR undated and
-                    completed that day; canceled tasks never count.
+- tasks_planned:    tasks created before the day's end that were on the plate:
+                    due before end-of-day (incl. overdue, still open) OR undated
+                    and completed that day; canceled tasks never count.
 - deep_work_hours:  sum of focus session minutes logged that day.
 - habits_scheduled: 'daily' habits that existed by end of that day.
 - habits_completed: of those, with a completed log entry that day.
@@ -40,6 +40,7 @@ async def collect_daily_metrics(session: AsyncSession, day: date) -> DailyMetric
         await session.exec(
             select(func.count(Task.id)).where(
                 Task.status != "canceled",
+                Task.created_at < end,
                 or_(
                     and_(
                         or_(Task.due_date < end, Task.deadline_date <= day),
