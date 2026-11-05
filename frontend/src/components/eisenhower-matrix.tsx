@@ -9,9 +9,9 @@ import { MATRIX_ZONES, classificationForZone, matrixZoneOf, selectMatrixTasks, t
 import { TaskItem } from "@/components/task-item"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import "./eisenhower-matrix.css"
 
 const SELECT_STYLE = "min-h-9 max-w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
-const ACCENTS = ["border-t-overdue", "border-t-primary", "border-t-chart-3", "border-t-muted-foreground", "border-t-border"]
 type MoveState = "pending" | "failed"
 type FocusRequest = { id: string; zone: MatrixZoneId }
 
@@ -32,7 +32,7 @@ function MatrixCard({ task, tasks, lists, state, move, focusedTask, consumeFocus
   const parent = tasks.find(candidate => candidate.id === task.parent_id)
   const zone = matrixZoneOf(task)
   return (
-    <article ref={setNodeRef} aria-label={task.title} aria-busy={state === "pending"} className={cn("min-w-0 rounded-xl border border-border bg-background/60 p-2", isDragging && "opacity-40")}>
+    <article ref={setNodeRef} aria-label={task.title} aria-busy={state === "pending"} className={cn("min-w-0 rounded-xl border border-border bg-background p-2 text-foreground", isDragging && "opacity-40")}>
       <TaskItem task={task} subtasks={[]} lists={lists} showList actionsVisible showCompletedDeadline />
       {task.parent_id !== null && <p className="px-3 pb-2 text-xs text-muted-foreground break-words">Subtask of {parent?.title ?? "another task"}</p>}
       <div className="flex flex-wrap items-center gap-2 px-3 pb-1">
@@ -66,14 +66,14 @@ function MatrixCard({ task, tasks, lists, state, move, focusedTask, consumeFocus
   )
 }
 
-function MatrixZone({ zone, index, tasks, scope, children }: { zone: typeof MATRIX_ZONES[number]; index: number; tasks: Task[]; scope: Scope; children: React.ReactNode }) {
+function MatrixZone({ zone, tasks, scope, children }: { zone: typeof MATRIX_ZONES[number]; tasks: Task[]; scope: Scope; children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: zone.id })
   const [title, setTitle] = useState("")
   const create = useCreateTask()
   return (
-    <section ref={setNodeRef} aria-label={zone.label} className={cn("min-w-0 rounded-xl border border-border border-t-2 bg-muted/20 p-3 sm:p-4", ACCENTS[index], isOver && "bg-primary/10 ring-2 ring-primary", zone.id === "unclassified" && "lg:col-span-2")}>
-      <div className="mb-3 flex items-center justify-between gap-2"><h2 className="text-sm font-semibold">{zone.label}</h2><span className="text-xs tabular-nums text-muted-foreground" aria-label={`${tasks.length} tasks`}>{tasks.length}</span></div>
-      <div className="space-y-2">{children}{tasks.length === 0 && <p className="py-5 text-sm text-muted-foreground">{zone.id === "unclassified" ? "All visible tasks are classified." : "No matching tasks in this quadrant."}</p>}</div>
+    <section ref={setNodeRef} aria-label={zone.label} data-zone={zone.id} className={cn("matrix-zone min-w-0 rounded-xl border p-3 sm:p-4", isOver && "ring-2 ring-primary ring-offset-2 ring-offset-background", zone.id === "unclassified" && "lg:col-span-2")}>
+      <div className="mb-3 flex items-center justify-between gap-2"><h2 className="text-sm font-semibold">{zone.label}</h2><span className="matrix-zone-count flex min-h-6 min-w-6 items-center justify-center rounded-md px-1.5 text-xs font-semibold tabular-nums">{tasks.length}<span className="sr-only"> {tasks.length === 1 ? "task" : "tasks"}</span></span></div>
+      <div className="space-y-2">{children}{tasks.length === 0 && <p className="py-5 text-sm">{zone.id === "unclassified" ? "All visible tasks are classified." : "No matching tasks in this quadrant."}</p>}</div>
       <form className="mt-3 flex min-w-0 flex-wrap gap-2" onSubmit={event => {
         event.preventDefault()
         if (!title.trim() || create.isPending) return
@@ -124,9 +124,9 @@ export function EisenhowerMatrix({ tasks, lists, scope, search = "" }: { tasks: 
       <p id="matrix-drag-help" className="sr-only">Drag to a quadrant, or use the Move to quadrant selector.</p>
       <DndContext collisionDetection={pointerWithin} sensors={sensors} onDragStart={({ active }) => setDraggedTask(visible.find(task => task.id === active.id))} onDragCancel={() => setDraggedTask(undefined)} onDragEnd={onDragEnd}>
         <div className="grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-2">
-          {MATRIX_ZONES.map((zone, index) => {
+          {MATRIX_ZONES.map(zone => {
             const bucket = visible.filter(task => matrixZoneOf(task) === zone.id)
-            return <MatrixZone key={zone.id} zone={zone} index={index} tasks={bucket} scope={scope}>
+            return <MatrixZone key={zone.id} zone={zone} tasks={bucket} scope={scope}>
               {bucket.map(task => <MatrixCard key={task.id} task={task} tasks={tasks} lists={lists} state={states[task.id]} move={move} focusedTask={focusedTask} consumeFocus={() => setFocusedTask(undefined)} />)}
             </MatrixZone>
           })}

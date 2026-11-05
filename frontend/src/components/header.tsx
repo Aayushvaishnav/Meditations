@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { Calendar, Command, List, Search, Columns3, Grid2X2, X } from "lucide-react"
+import { Calendar, Command, List, Search, Columns3, X } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useLists } from "@/hooks/api"
 import { Button } from "@/components/ui/button"
@@ -23,11 +23,11 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export function Header() {
-  const { view, setView, scope, search, setSearch, setPaletteOpen } = useUi()
+  const { section, view, setView, scope, search, setSearch, setPaletteOpen } = useUi()
   const lists = useLists()
   const searchRef = useRef<HTMLInputElement>(null)
 
-  const title =
+  const title = section === "matrix" ? "Eisenhower Matrix" :
     scope.kind === "list"
       ? (lists.data?.find((l) => l.id === scope.id)?.name ?? "List")
       : SMART_TITLES[scope.id]
@@ -80,13 +80,12 @@ export function Header() {
         </TooltipTrigger>
         <TooltipContent>Command menu</TooltipContent>
       </Tooltip>
-      <div className="glass flex items-center gap-0.5 rounded-lg p-0.5">
+      {section !== "matrix" && <div className="glass flex items-center gap-0.5 rounded-lg p-0.5">
         {(
           [
             { id: "list", icon: List, label: "List view" },
             { id: "board", icon: Columns3, label: "Board view" },
             { id: "calendar", icon: Calendar, label: "Calendar view" },
-            { id: "matrix", icon: Grid2X2, label: "Matrix view" },
           ] as const
         ).map(({ id, icon: Icon, label }) => (
           <button
@@ -101,10 +100,10 @@ export function Header() {
             )}
           >
             <Icon className="size-3.5" />
-            {id === "list" ? "List" : id === "board" ? "Board" : id === "calendar" ? "Calendar" : "Matrix"}
+            {id === "list" ? "List" : id === "board" ? "Board" : "Calendar"}
           </button>
         ))}
-      </div>
+      </div>}
     </div>
   )
 }

@@ -15,6 +15,7 @@ const tests = [
   "src/lib/calendar-projection.test.ts",
   "src/lib/calendar-time-grid.test.ts",
   "src/lib/calendar-time-edit.test.ts",
+  "src/components/calendar/month.test.tsx",
   "src/components/calendar/time-grid.test.tsx",
   "src/components/calendar/year.test.tsx",
   "src/components/calendar/time-edit.test.tsx",

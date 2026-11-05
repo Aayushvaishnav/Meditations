@@ -1,0 +1,57 @@
+.matrix-zone[data-zone="do"] {
+  --zone-surface: #fff1f2;
+  --zone-ink: #9f1239;
+  --zone-accent: #e11d48;
+}
+
+.matrix-zone[data-zone="schedule"] {
+  --zone-surface: #eff6ff;
+  --zone-ink: #1e40af;
+  --zone-accent: #2563eb;
+}
+
+.matrix-zone[data-zone="delegate"] {
+  --zone-surface: #fffbeb;
+  --zone-ink: #92400e;
+  --zone-accent: #d97706;
+}
+
+.matrix-zone[data-zone="eliminate"] {
+  --zone-surface: #ecfdf5;
+  --zone-ink: #065f46;
+  --zone-accent: #059669;
+}
+
+.dark .matrix-zone[data-zone="do"] {
+  --zone-surface: #381e29;
+  --zone-ink: #fda4af;
+  --zone-accent: #fb7185;
+}
+
+.dark .matrix-zone[data-zone="schedule"] {
+  --zone-surface: #192c45;
+  --zone-ink: #93c5fd;
+  --zone-accent: #60a5fa;
+}
+
+.dark .matrix-zone[data-zone="delegate"] {
+  --zone-surface: #362c19;
+  --zone-ink: #fcd34d;
+  --zone-accent: #fbbf24;
+}
+
+.dark .matrix-zone[data-zone="eliminate"] {
+  --zone-surface: #16352e;
+  --zone-ink: #6ee7b7;
+  --zone-accent: #34d399;
+}
+
+.matrix-zone {
+  background-color: var(--zone-surface, var(--card));
+  border-color: var(--zone-accent, var(--border));
+  color: var(--zone-ink, var(--foreground));
+}
+
+.matrix-zone-count {
+  background-color: color-mix(in srgb, var(--zone-accent, var(--foreground)) 12%, var(--zone-surface, var(--card)));
+}

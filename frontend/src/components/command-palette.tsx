@@ -113,6 +113,7 @@ function PaletteBody() {
       { id: "nav-journal", label: "Journal", group: "Navigate", icon: <BookOpen className="size-4" />, run: () => goSection("journal") },
       { id: "nav-brain", label: "Second brain", group: "Navigate", icon: <Brain className="size-4" />, run: () => goSection("second_brain") },
       { id: "nav-insights", label: "Insights", group: "Navigate", icon: <TrendingUp className="size-4" />, run: () => goSection("insights") },
+      { id: "nav-matrix", label: "Eisenhower Matrix", group: "Navigate", icon: <Grid2X2 className="size-4" />, run: () => goSection("matrix") },
       { id: "nav-settings", label: "Settings", group: "Navigate", icon: <Settings className="size-4" />, run: () => goSection("settings") },
     ]
 
@@ -137,7 +138,6 @@ function PaletteBody() {
         { id: "list", label: "List view", icon: List },
         { id: "board", label: "Board view", icon: Columns3 },
         { id: "calendar", label: "Calendar view", icon: Calendar },
-        { id: "matrix", label: "Matrix view", icon: Grid2X2 },
       ] as const
     ).map(({ id, label, icon: Icon }) => ({
       id: `view-${id}`,
