@@ -38,6 +38,13 @@ class ListUpdate(SQLModel):
     icon: str | None = None
     is_favorite: bool | None = None
 
+    @field_validator("name", "color", "is_favorite", mode="before")
+    @classmethod
+    def _required_value(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("Field may be omitted but must not be null")
+        return value
+
 
 # --- Tasks ---
 class TaskCreate(DeadlineInput, SQLModel):
@@ -75,6 +82,13 @@ class TaskUpdate(DeadlineInput, SQLModel):
     tags: list[str] | None = None
     list_id: str | None = None
     parent_id: str | None = None
+
+    @field_validator("title", "priority", "status", "tags", mode="before")
+    @classmethod
+    def _required_value(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("Field may be omitted but must not be null")
+        return value
 
     @field_validator("due_date")
     @classmethod

@@ -95,12 +95,14 @@ def test_calendar_telemetry(client):
     from app import db
     from app.telemetry import collect_daily_metrics
 
-    for label in ['2026-11-01', '2026-11-02', '2026-11-03']:
-        client.post('/api/tasks', json={'title': label, 'deadline': {'kind': 'date', 'date': label}})
-    client.post('/api/tasks', json={'title': 'undated'})
-
     async def metrics():
         async with db.get_sessionmaker()() as session:
+            session.add_all([
+                Task(title=label, deadline_date=date.fromisoformat(label), created_at=datetime(2026, 11, 1))
+                for label in ['2026-11-01', '2026-11-02', '2026-11-03']
+            ])
+            session.add(Task(title='undated', created_at=datetime(2026, 11, 1)))
+            await session.commit()
             return await collect_daily_metrics(session, date(2026, 11, 2))
 
     assert client.portal.call(metrics).tasks_planned == 2
@@ -243,10 +245,10 @@ def test_calendar_completed_canceled_telemetry(client):
     async def seed_and_measure():
         async with db.get_sessionmaker()() as session:
             session.add_all([
-                Task(title='completed today', deadline_date=date(2026, 11, 1), status='completed', completed_at=datetime(2026, 11, 2, 9)),
-                Task(title='completed yesterday', deadline_date=date(2026, 11, 1), status='completed', completed_at=datetime(2026, 11, 1, 9)),
-                Task(title='canceled', deadline_date=date(2026, 11, 1), status='canceled'),
-                Task(title='open', deadline_date=date(2026, 11, 2)),
+                Task(title='completed today', created_at=datetime(2026, 11, 1), deadline_date=date(2026, 11, 1), status='completed', completed_at=datetime(2026, 11, 2, 9)),
+                Task(title='completed yesterday', created_at=datetime(2026, 11, 1), deadline_date=date(2026, 11, 1), status='completed', completed_at=datetime(2026, 11, 1, 9)),
+                Task(title='canceled', created_at=datetime(2026, 11, 1), deadline_date=date(2026, 11, 1), status='canceled'),
+                Task(title='open', created_at=datetime(2026, 11, 1), deadline_date=date(2026, 11, 2)),
             ])
             await session.commit()
             return await collect_daily_metrics(session, date(2026, 11, 2))

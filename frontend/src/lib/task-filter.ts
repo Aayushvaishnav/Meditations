@@ -12,12 +12,17 @@ export const TASK_GROUPS_BY_SCOPE: Record<SmartView | "list", TaskGroup[]> = {
   list: ["overdue", "today", "tomorrow", "upcoming", "nodate"],
 }
 
-export function selectScopedTasks(tasks: Task[], scope: Scope, search: string, now = new Date()): Task[] {
-  const groups = TASK_GROUPS_BY_SCOPE[scope.kind === "list" ? "list" : scope.id]
+export function selectScopedTasks(
+  tasks: Task[], scope: Scope, search: string, now = new Date(),
+  completed: "scope" | "include-in-all-and-list" = "scope",
+): Task[] {
+  const scopeKey = scope.kind === "list" ? "list" : scope.id
+  const groups = TASK_GROUPS_BY_SCOPE[scopeKey]
+  const includeCompleted = completed === "include-in-all-and-list" && (scopeKey === "all" || scopeKey === "list")
   return tasks.filter(task =>
     task.status !== "canceled" &&
     (scope.kind !== "list" || task.list_id === scope.id) &&
     matchTaskSearch(task, search) &&
-    groups.includes(groupOf(task, now)),
+    (groups.includes(groupOf(task, now)) || (includeCompleted && task.status === "completed")),
   )
 }

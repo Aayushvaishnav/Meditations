@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from app.migrations.task_classification import migrate_task_classification
+from app.migrations.task_null_tags import migrate_task_null_tags
 from app.migrations.baseline import STATEMENTS
 from app.migrations.calendar_import import migrate_calendar_import
 from app.migrations.calendar_sync_status import migrate_calendar_sync_status
@@ -98,6 +99,7 @@ MIGRATIONS: tuple[Callable[[AsyncConnection], Awaitable[None]], ...] = (
     migrate_webhooks,
     migrate_calendar_inbound,
     migrate_task_classification,
+    migrate_task_null_tags,
 )
 LATEST_VERSION = len(MIGRATIONS)
 
