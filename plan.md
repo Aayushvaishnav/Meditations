@@ -1308,8 +1308,21 @@ without freshness state are regenerated once. Healthy vectors are retained.
 Recovery and full reindex acquire SQLite's writer lock before reading sources;
 index changes commit together or roll back together. Full reindex clears derived
 indexes and state before rebuilding from current sources, including an empty
-database. Both recovery paths can run keyword-only. Missing embeddings retry at
-the next startup or explicit reindex; no background embedding worker is added.
+database. Both recovery paths can run keyword-only. Each recovery/reindex pass
+records embedding unavailability after its first initialization or inference
+failure and skips embeddings for the remaining documents in that pass. Missing
+embeddings retry at the next startup or explicit reindex; individual later saves
+and search requests can also retry optional embeddings.
+
+Model initialization and inference run on a dedicated serialized executor in
+`app/embedding_worker.py`, never on the API event loop. Awaited results still
+participate in the caller's source/index transaction; this is not an outbox or
+a background indexing queue. Canceling a caller discards its result but cannot
+interrupt an already-running model call; subsequent calls remain serialized.
+Application and synthetic-seeder shutdown drain the executor before disposing the
+database, including startup failure. Offloading does not shorten the SQLite writer
+lock held during indexing/reconciliation; transaction/outbox changes require
+separate evidence.
 `GET /api/search/status` reports extension readiness; the reindex response's
 `semantic` flag reports whether the rebuilt index contains a ready vector.
 

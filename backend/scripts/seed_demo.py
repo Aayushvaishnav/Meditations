@@ -729,21 +729,26 @@ async def main() -> None:
     start = d(args.start) if args.start else monday_of(end - timedelta(days=34))
 
     db.init_engine(f"sqlite+aiosqlite:///{args.db}")
-    await db.init_db()
-    async with db.get_sessionmaker()() as session:
-        if args.no_reset:
-            print(f"Seeding into {args.db} (existing rows kept)")
-        else:
-            counts = await wipe_data(session)
-            wiped = {k: v for k, v in counts.items() if v}
-            print(f"Reset {args.db}: removed {wiped or 'nothing'}")
-            print("(app_settings and ai_usage are preserved)")
-        stats = await generate(session, start, end, seed=args.seed)
-        index_info = await reindex_search(session, embed=not args.no_embed)
-        target = await target_deep_work_hours(session)
-        preview = await weekly_preview(session, start, end, target)
-        report(start, end, stats, index_info, preview, target)
-    await db.dispose_engine()
+    try:
+        await db.init_db()
+        async with db.get_sessionmaker()() as session:
+            if args.no_reset:
+                print(f"Seeding into {args.db} (existing rows kept)")
+            else:
+                counts = await wipe_data(session)
+                wiped = {k: v for k, v in counts.items() if v}
+                print(f"Reset {args.db}: removed {wiped or 'nothing'}")
+                print("(app_settings and ai_usage are preserved)")
+            stats = await generate(session, start, end, seed=args.seed)
+            index_info = await reindex_search(session, embed=not args.no_embed)
+            target = await target_deep_work_hours(session)
+            preview = await weekly_preview(session, start, end, target)
+            report(start, end, stats, index_info, preview, target)
+    finally:
+        try:
+            await search.shutdown_embeddings()
+        finally:
+            await db.dispose_engine()
 
 
 if __name__ == "__main__":
