@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { CalendarView } from "./calendar-view"
@@ -20,7 +20,7 @@ function overlay(summary = "Live appointment"): InboundOverlay {
 let client: QueryClient
 let routes: Record<string, () => unknown>
 let fetcher: ReturnType<typeof vi.fn>
-const disclosure = () => screen.getByRole("button", { name: "Calendar sources" })
+const disclosure = () => screen.getByText("Calendar sources", { selector: "button" })
 const chips = (summary = "Live appointment") => screen.queryAllByRole("button").filter(button => button.textContent === `${summary}Mirrored`)
 
 beforeEach(() => {
@@ -67,7 +67,8 @@ describe("live calendar sources disclosure with real query hooks", () => {
     for (const mode of ["year", "month", "week", "agenda", "multi-day", "multi-week"]) {
       fireEvent.change(selector, { target: { value: mode } })
       expect((selector as HTMLSelectElement).value).toBe(mode)
-      const day = screen.getByRole("button", { name: mode === "year" ? /^2026-03-08, 0 items:/ : "Add task on 2026-03-08" })
+      const calendar = mode === "year" ? within(screen.getByRole("region", { name: "March 2026" })) : screen
+      const day = calendar.getByRole("button", { name: mode === "year" ? /^2026-03-08, 0 items:/ : "Add task on 2026-03-08" })
       day.focus()
       expect(document.activeElement).toBe(day)
       expect(day.hasAttribute("disabled")).toBe(false)
