@@ -33,7 +33,7 @@ def period_closes(kind: ReviewKind, period: str) -> date:
 
 
 async def run_review(session: AsyncSession, kind: ReviewKind, period: str) -> None:
-    from app.routers.agents import rollup_daily, rollup_monthly, rollup_weekly
+    from app.ai_orchestration import rollup_daily, rollup_monthly, rollup_weekly
 
     if kind == "daily":
         await rollup_daily(session, day=date.fromisoformat(period))

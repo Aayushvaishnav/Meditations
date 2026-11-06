@@ -1,6 +1,6 @@
 # Journal Backend
 
-Local-first FastAPI + SQLite backend for the task/journal/AI life-OS (see `../plan.md`).
+Local-first FastAPI + SQLite backend for the task/journal/AI life-OS (see the [root architecture reference](../plan.md)).
 
 ## Setup
 
@@ -143,7 +143,7 @@ the recalculated live value.
 - `PUT /api/settings/ai` — set overrides (`""` clears one back to the env default)
 - `DELETE /api/settings/ai` — drop all overrides
 
-`app.ai_factory.create_agent_model()` builds a pydantic-ai model for any OpenAI-compatible endpoint or Anthropic. Note: the plan's §7.1 snippet targets pydantic-ai 0.x; the installed v2 API is used instead (`OpenAIChatModel` + provider objects, `output_type=` on agents).
+`app.ai_factory.create_agent_model()` builds a pydantic-ai model for any OpenAI-compatible endpoint or Anthropic. The installed v2 API uses `OpenAIChatModel` with provider objects and `output_type=` on agents; see the [AI implementation reference](../plan.md#7-ai-implementation-blueprint-with-pydanticai).
 
 ## API surface (Phase 1)
 
@@ -427,30 +427,37 @@ Monday-based weeks; task UTC/date arithmetic remains unchanged.
 `app/recurring_tasks.py` owns completion-triggered task successors;
 `app/recurrence.py` owns task-rule arithmetic. Calendar `VEVENT` recurrence belongs
 to a separate domain. Current local blocks are nonrecurring and reject calendar
-recurrence inputs. ICS-02 retains external series opaquely; occurrence expansion
-remains deferred. Selected-block CalDAV publication, individual-block ICS snapshot
-export and read-only file import are implemented separately below. SCHED-04
-itself required no migration.
+recurrence inputs. ICS-02 retains original external series; REV-17 projects supported
+occurrences read-only through the separate `app/external_recurrence.py` module.
+Imported and live overlay endpoints accept optional paired `start`/`end` dates
+(exclusive end, at most 370 days); calls without a window retain opaque recurrence.
+Expansion does not create tasks, blocks, scores, or publication records.
+Selected-block CalDAV publication, individual-block ICS snapshot export and
+read-only file import are implemented separately below. SCHED-04 itself required
+no migration.
 
 - Snapshot export derives each individual block's stable `VEVENT` UID from its
   stable local ID. Never export a task RRULE as a `VEVENT` RRULE; event
   attendance/status must never trigger task successor clones.
-- Future external identity is collection/source + UID + original typed
+- External identity is collection/source + UID + original typed
   `RECURRENCE-ID`: DATE, local date-time with TZID, or UTC date-time. A series
   master uses an explicit master marker. Moved occurrences retain the original
   identity rather than their new start time; never match by title or date.
-  Floating date-times and `RANGE=THISANDFUTURE` require dedicated support; until
-  then retain the whole resource as opaque/read-only or reject it atomically.
+  Floating series keep their source clock labels. `RANGE=THISANDFUTURE` remains
+  unsupported and produces an unplaced diagnostic without changing the resource.
 - Preserve overrides, cancellation tombstones, and `EXDATE`/`RDATE` values.
   Unsupported raw provider rules stay opaque/read-only or are rejected atomically,
   never converted to task rules or partially expanded.
-- Future wall-clock recurrence follows SCHED-03's zone and explicit gap/fold
-  resolution contract; task UTC/date semantics are unchanged.
+- External wall-clock display follows the source timezone with explicit unsafe
+  gap/fold diagnostics; local block recurrence remains deferred and task UTC/date
+  semantics are unchanged.
 
 ## Known limitations / deferred
 
 - Timezone-aware scheduling (store local + convert) is deferred until the frontend lands; naive-UTC is the interim contract.
-- Task recurrence supports the strict DAILY/WEEKLY subset above; calendar recurrence remains deferred.
+- Task recurrence supports the strict DAILY/WEEKLY subset above. Local block
+  recurrence and external series editing remain deferred; REV-17 supplies bounded
+  read-only external occurrence display.
 - Journal routes (TipTap content, mood/energy) are Phase 3; the tables already exist.
 - `daily_scores`/`weekly_summaries`/`monthly_summaries` are written by the Phase 4 agents; scoring is live-computed until then.
 
@@ -605,7 +612,7 @@ explicit verification and enablement before any dispatch; the lifecycle worker
 remains idle for disabled destinations.
 
 Tests use fake vaults and mocked HTTP, without real accounts or user databases.
-See `plan.md` §6.4 for the complete lifecycle contract.
+See the [root architecture reference, §6.4](../plan.md#64-optional-local-first-calendar-interoperability) for the complete lifecycle contract.
 
 ### Durable offline queue (CAL-05)
 

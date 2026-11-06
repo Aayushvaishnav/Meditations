@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, text
+from app.document_status import JournalDocumentStatus, journal_document_status
 from sqlmodel import SQLModel, select
 
 from app.models import FocusSession, Habit, HabitLog, JournalEntry, Task
@@ -73,6 +74,25 @@ async def list_entry_days(
         for e in rows
         if e.raw_markdown.strip() or e.mood is not None or e.energy is not None
     ]
+
+
+@router.get("/{day}/status", response_model=JournalDocumentStatus)
+async def get_document_status(day: date, session: SessionDep):
+    return await journal_document_status(session, day)
+
+
+@router.post("/{day}/reindex", response_model=JournalDocumentStatus)
+async def reindex_entry(day: date, session: SessionDep):
+    # Take the writer lock before reading; a concurrent save must not be overwritten
+    await session.execute(text("DELETE FROM fts_entries WHERE 0"))
+    entry = await session.get(JournalEntry, day)
+    if entry is not None and entry.raw_markdown.strip():
+        await index_document(session, journal_doc_id(day), "journal", entry.raw_markdown)
+    else:
+        await remove_document(session, journal_doc_id(day))
+    status = await journal_document_status(session, day)
+    await session.commit()
+    return status
 
 
 @router.get("/{day}", response_model=JournalEntry)

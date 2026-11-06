@@ -1,4 +1,5 @@
 """Local opaque calendar imports; never connected to scheduling or sync."""
+from datetime import date
 from fastapi import APIRouter, HTTPException, Response
 from sqlmodel import select
 
@@ -52,5 +53,5 @@ async def delete_source(source_id: str, session: SessionDep):
 
 
 @router.get('/{source_id}/overlay', response_model=CalendarOverlay)
-async def imported_overlay(source_id: str, session: SessionDep):
-    return await overlay(session, source_id)
+async def imported_overlay(source_id: str, session: SessionDep, start: date | None = None, end: date | None = None):
+    return await overlay(session, source_id, start, end)

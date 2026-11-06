@@ -1,3 +1,4 @@
+import type { CalendarOverlayWindow } from "@/lib/calendar-overlay-window"
 import { useId, useState, type ReactNode } from "react"
 import { CalendarDays } from "lucide-react"
 import type { ImportedOverlayItem } from "@/api/calendar-overlay-types"
@@ -5,13 +6,13 @@ import { useImportedCalendars, useImportedCalendarOverlay, type OverlaySelection
 import { Button } from "./ui/button"
 import { importedEventLabel } from "@/lib/calendar-overlay"
 
-export function CalendarImportedOverlay({ children, inlineControls = true }: { inlineControls?: boolean; children: (items: ImportedOverlayItem[], controls: ReactNode, summary: string) => ReactNode }) {
+export function CalendarImportedOverlay({ children, inlineControls = true, window }: { window?: CalendarOverlayWindow; inlineControls?: boolean; children: (items: ImportedOverlayItem[], controls: ReactNode, summary: string) => ReactNode }) {
   const id = useId()
   const sources = useImportedCalendars()
   const [selection, setSelection] = useState<OverlaySelection>({ kind: "none" })
   const selected = selection.kind === "source" ? sources.data?.find(source => source.id === selection.id) : undefined
   const effective: OverlaySelection = selected ? { kind: "source", id: selected.id } : { kind: "none" }
-  const overlay = useImportedCalendarOverlay(effective)
+  const overlay = useImportedCalendarOverlay(effective, window)
   const items = selected && !sources.isError && !overlay.isError ? overlay.data?.items ?? [] : []
   const controls = <section aria-label="Imported calendar overlay" className="mb-4 space-y-2 border-b border-border pb-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -29,7 +30,7 @@ export function CalendarImportedOverlay({ children, inlineControls = true }: { i
       {selected && overlay.isPending && <p role="status" className="text-sm text-muted-foreground">Loading imported appointments…</p>}
       {selected && overlay.isError && <p role="alert" className="text-sm">Could not load imported appointments. <Button variant="outline" size="sm" onClick={() => overlay.refetch()}>Retry appointments</Button></p>}
       {selected && overlay.isSuccess && <>
-        <p className="text-xs text-muted-foreground">{items.length} standalone appointments available. Series remain in the source inventory without occurrence expansion. Floating times keep their source clock labels.</p>
+        <p className="text-xs text-muted-foreground">{items.length} appointments available. Supported recurring occurrences appear for the visible range; unsupported series remain outside the grid. Floating times keep their source clock labels.</p>
         {overlay.data.unplaced.length > 0 && <details>
           <summary className="cursor-pointer rounded-sm py-1 text-xs focus-visible:outline-2 focus-visible:outline-ring">Outside the grid ({overlay.data.unplaced.length})</summary>
           <ul className="max-h-48 space-y-2 overflow-y-auto py-2 text-xs">

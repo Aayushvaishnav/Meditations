@@ -81,7 +81,7 @@ describe("live calendar sources disclosure with real query hooks", () => {
     vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] })
     await selectLiveCalendar()
     expect(chips()).toHaveLength(1)
-    const query = client.getQueryCache().find({ queryKey: [...calendarInboundKey, "overlay", { kind: "connection", id: "c1" }], exact: true })!
+    const query = client.getQueryCache().find({ queryKey: [...calendarInboundKey, "overlay", { kind: "connection", id: "c1" }], exact: false })!
     expect(query.getObserversCount()).toBe(1)
     const before = fetcher.mock.calls.filter(([url]) => String(url).includes(overlayPath)).length
     routes[overlayPath] = () => overlay("Polled appointment")

@@ -12,12 +12,13 @@ import {
 } from "@dnd-kit/core"
 import { sortableKeyboardCoordinates, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
+import { BulkTaskCheckbox } from "@/components/bulk-tasks"
 import { TaskCheckbox } from "@/components/task-item"
 import { PriorityBadge } from "@/components/priority-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SearchX } from "lucide-react"
-import { selectBoardTasks } from "@/lib/board"
+import { boardColumns, selectBoardTasks } from "@/lib/board"
 import { useUi, type Scope } from "@/stores/ui"
 import type { Task, TaskStatus } from "@/api/types"
 import { deadlineCutoff, formatDeadline } from "@/lib/task-deadlines"
@@ -31,13 +32,6 @@ const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: "completed", label: "Done" },
 ]
 
-const DONE_CAP = 30
-
-function byOrder(a: Task, b: Task): number {
-  if (a.order_index !== b.order_index) return a.order_index - b.order_index
-  return a.created_at.localeCompare(b.created_at)
-}
-
 function TaskCard({ task, dragging = false }: { task: Task; dragging?: boolean }) {
   const done = task.status === "completed"
   const overdue = useDeadlinePassed(done ? null : deadlineCutoff(task.deadline))
@@ -50,7 +44,8 @@ function TaskCard({ task, dragging = false }: { task: Task; dragging?: boolean }
       )}
     >
       <div className="flex items-start gap-2">
-        <span className="mt-0.5" onClick={(e) => e.stopPropagation()}>
+        <span className="mt-0.5 flex gap-2.5" onClick={(e) => e.stopPropagation()}>
+          {!dragging && <BulkTaskCheckbox task={task} />}
           <TaskCheckbox task={task} />
         </span>
         <div className="min-w-0">
@@ -145,16 +140,9 @@ export function KanbanBoard({ tasks, scope, search = "" }: { tasks: Task[]; scop
 
   const visible = useMemo(() => selectBoardTasks(tasks, scope, search), [tasks, scope, search])
 
-  const columns = useMemo(() => {
-    return COLUMNS.map((c) => {
-      const all = visible.filter((t) => t.status === c.status).sort(byOrder)
-      return {
-        ...c,
-        tasks: c.status === "completed" ? all.slice(0, DONE_CAP) : all,
-        overflow: c.status === "completed" ? Math.max(0, all.length - DONE_CAP) : 0,
-      }
-    })
-  }, [visible])
+  const columns = useMemo(() => boardColumns(visible).map(column => ({
+    ...column, label: COLUMNS.find(candidate => candidate.status === column.status)!.label,
+  })), [visible])
 
   function onDragStart(event: DragStartEvent) {
     setActiveTask(visible.find((t) => t.id === event.active.id) ?? null)

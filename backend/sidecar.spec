@@ -12,8 +12,7 @@ credential_backends = {
 }
 credential_backend = credential_backends.get(sys.platform)
 
-datas = collect_data_files("sqlite_vec")  # bundles the vec0 loadable extension
-datas += collect_data_files("fastembed")
+datas = collect_data_files("fastembed")
 datas += collect_data_files("tzdata")
 
 # several deps (genai_prices, pydantic_ai, ...) read their version or config
@@ -33,7 +32,8 @@ for _dist in _md.distributions():
 print(f"SPECCHECK: {len(datas)} data entries after metadata copy")
 
 binaries = collect_dynamic_libs("onnxruntime")
-binaries += collect_dynamic_libs("sqlite_vec")
+# vec0.so lacks the lib prefix required by PyInstaller's default Unix patterns;
+binaries += collect_dynamic_libs("sqlite_vec", search_patterns=["vec0.so", "vec0.dylib", "vec0.dll"])
 
 # entry-point/dynamic imports invisible to static analysis
 hiddenimports = (

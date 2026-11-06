@@ -104,7 +104,7 @@ While a connection is verified and sync is enabled, Journal mirrors the remote c
 
 Mirroring updates every 30 seconds while the app runs, on **Sync now**, and when the window returns to focus or becomes visible. After restarting or restoring, verify and enable the connection in Settings before remote activity resumes. If a stored sync token expires, the cache rebuilds automatically. Servers without token support use complete calendar listings.
 
-The selector starts **Hidden**. Choose a calendar to see its last successful check, read-only appointments and **Outside the grid** details for recurring, cancelled or unsupported events. Series with multiple components stay preserved without occurrence expansion. Paused, authentication-required or failed refreshes label the last-good appointments stale. If the local cache cannot be loaded, use **Retry appointments**.
+The selector starts **Hidden**. Open **Calendar sources** and choose a calendar to see its last successful check, read-only appointments and supported recurring occurrences in all six calendar modes. Moved exceptions replace the original occurrence, and cancelled occurrences are omitted. **Outside the grid** lists unsupported or over-limit series and unsafe intervals. The same [recurrence display rules and limits](calendar-import.md#show-appointments-on-calendar) apply to imported and mirrored calendars. Original remote resources, including series with multiple components, remain preserved. Paused, authentication-required or failed refreshes label the last-good appointments stale. If the local cache cannot be loaded, use **Retry appointments**.
 
 Pausing stops mirroring but keeps cached appointments visible with that warning. Disconnecting hides the calendar and retains its local cache until reconnection; selecting a different destination clears the previous cache. Edit mirrored events in your other calendar client. Journal's existing outbound sync still writes only explicitly opted-in work blocks.
 
@@ -129,6 +129,19 @@ When offline, queued work stays local until the connection is available. If auth
 A **conflict** means Journal cannot safely update or remove the remote resource, for example after another client edits it. Journal does not force an overwrite. Inspect both copies in Journal and your other calendar client. Use **Stop syncing; keep remote** to detach safely, then resolve differences manually in the appropriate app. Detachment stops synchronization; it does not merge copies or make that block eligible for automatic republication.
 
 If Settings reports **Credential removal incomplete. Retry Disconnect.**, unlock or repair access to the OS credential store and choose **Disconnect** again. Remote events remain untouched; do not assume credentials have been removed until the retry succeeds.
+
+## Further synchronization
+
+Inbound edits to local work blocks, Evolution Data Server/Akonadi bridges, and
+VTODO task synchronization are deferred. The 2026-11-06 evaluation found no
+current unmet user workflow requiring them. Remote appointments remain
+read-only in Journal; edit them in their owning calendar client. Task
+synchronization is separate from publishing work blocks as appointments.
+
+Reconsidering these features requires a concrete workflow and, for bidirectional
+edits, agreed ownership and recoverable conflict rules. Packaged desktop and
+native credential verification also remain open. No additional account, server,
+or cloud relay is required by this decision; local-only use remains available.
 
 ## Verification scope
 

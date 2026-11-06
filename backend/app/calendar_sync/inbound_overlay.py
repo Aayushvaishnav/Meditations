@@ -1,4 +1,5 @@
 """Read-only projection of live reconciled remote events; tasks stay authoritative locally."""
+from datetime import date
 from typing import Annotated, Literal
 
 from icalendar import Calendar
@@ -27,7 +28,7 @@ class InboundOverlayUnplaced(BaseModel):
     summary: str
     status: str
     reason: Literal['cancelled', 'recurrence', 'missing_start', 'unsupported_duration',
-                    'unknown_timezone', 'invalid_interval', 'incomparable_interval',
+                    'recurrence_limit', 'unsupported_recurrence', 'unknown_timezone', 'invalid_interval', 'incomparable_interval',
                     'invalid_component', 'ambiguous_local_time', 'nonexistent_local_time',
                     'unparsable_resource', 'unsupported_resource']
 
@@ -75,7 +76,10 @@ def _project(event: CalendarInboundEvent) -> tuple[InboundOverlayItem | None, In
         return None, InboundOverlayUnplaced(**common, reason='invalid_component')
 
 
-async def inbound_overlay(session: AsyncSession, connection_id: str) -> InboundOverlay:
+async def inbound_overlay(session: AsyncSession, connection_id: str, start: date | None = None, end: date | None = None) -> InboundOverlay:
+    from app.external_recurrence import project, validate_window
+    from app.calendar_import.parser import parse_calendar, CalendarImportError
+    validate_window(start, end)
     rows = (await session.exec(select(CalendarInboundEvent).where(
         CalendarInboundEvent.connection_id == connection_id,
     ).order_by(CalendarInboundEvent.uid, CalendarInboundEvent.resource_url))).all()
@@ -88,6 +92,21 @@ async def inbound_overlay(session: AsyncSession, connection_id: str) -> InboundO
         last_synced_at=state.last_synced_at.isoformat() if state is not None and state.last_synced_at else None,
         last_error=state.last_error if state is not None else None)
     result = InboundOverlay(connection_id=connection_id, items=[], unplaced=[], reconciliation=status)
+    if start is not None:
+        entries = []
+        for row in rows:
+            try:
+                parsed = parse_calendar(row.content)
+                for event in parsed.events:
+                    entries.append((dict(connection_id=connection_id, id=f'{row.id}:{event.identity}', uid=event.uid,
+                                         summary=event.summary, status=event.status), row.content, event.component_index))
+            except CalendarImportError:
+                result.unplaced.append(InboundOverlayUnplaced(connection_id=connection_id, id=row.id,
+                    uid=row.uid or '', summary=row.summary or '', status='', reason='unparsable_resource'))
+        items, failures = project(entries, start, end)
+        result.items.extend(InboundOverlayItem(**item) for item in items)
+        result.unplaced.extend(InboundOverlayUnplaced(**item) for item in failures)
+        return result
     for row in rows:
         item, unplaced = _project(row)
         if item is not None:

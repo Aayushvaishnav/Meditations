@@ -45,7 +45,7 @@ class PlacedEvent(OverlayEvent):
 
 class UnplacedEvent(OverlayEvent):
     reason: Literal['cancelled', 'recurrence', 'missing_start', 'unsupported_duration',
-                    'unknown_timezone', 'invalid_interval', 'incomparable_interval',
+                    'recurrence_limit', 'unsupported_recurrence', 'unknown_timezone', 'invalid_interval', 'incomparable_interval',
                     'invalid_component', 'ambiguous_local_time', 'nonexistent_local_time']
 
 
@@ -103,7 +103,9 @@ def _interval(component, raw, zones: dict[str, tzinfo]):
     return interval_type(start=encode(start), end=encode(end))
 
 
-async def overlay(session: AsyncSession, source_id: str) -> CalendarOverlay:
+async def overlay(session: AsyncSession, source_id: str, start: date | None = None, end: date | None = None) -> CalendarOverlay:
+    from app.external_recurrence import project, validate_window
+    validate_window(start, end)
     await require_source(session, source_id)
     rows = (await session.exec(select(CalendarImportEvent).where(
         CalendarImportEvent.source_id == source_id
@@ -113,6 +115,12 @@ async def overlay(session: AsyncSession, source_id: str) -> CalendarOverlay:
             select(CalendarImportEvent.snapshot_id).where(CalendarImportEvent.source_id == source_id)
         ))
     )).all()}
+    if start is not None:
+        items, unplaced = project([
+            (dict(source_id=source_id, id=row.id, uid=row.uid, summary=row.summary, status=row.status),
+             snapshots[row.snapshot_id].content, row.component_index) for row in rows
+        ], start, end)
+        return CalendarOverlay(source_id=source_id, items=items, unplaced=unplaced)
     parsed_snapshots = {}
     series = {row.uid for row in rows if row.has_recurrence or row.recurrence_kind != 'master'}
     result = CalendarOverlay(source_id=source_id, items=[], unplaced=[])

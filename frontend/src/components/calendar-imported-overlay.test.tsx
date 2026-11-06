@@ -145,7 +145,7 @@ describe("imported calendar overlay with real query hooks", () => {
     await screen.findByRole("button", { name: "Retry appointments" })
     routes["/calendar/imports/a/overlay"] = () => ({ source_id: "a", items: [], unplaced: [{ id: "series", summary: "Recurring class", reason: "recurring_series" }, { id: "bad", summary: "Missing time", reason: "unsupported_time" }] })
     fireEvent.click(screen.getByRole("button", { name: "Retry appointments" }))
-    await screen.findByText(/^0 standalone appointments/)
+    await screen.findByText(/^0 appointments available/)
     fireEvent.click(screen.getByText("Outside the grid (2)"))
     expect(screen.getByText(/recurring series/)).toBeTruthy()
     expect(screen.getByText(/unsupported time/)).toBeTruthy()

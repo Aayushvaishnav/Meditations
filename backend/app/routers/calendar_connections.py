@@ -1,4 +1,5 @@
 """Local calendar connections and explicit credential-backed verification."""
+from datetime import date
 
 from collections.abc import Awaitable
 from datetime import datetime
@@ -191,7 +192,7 @@ async def detach_link(connection_id: str, link_id: str, controls: ControlsDep):
 
 
 @router.get('/{connection_id}/inbound/overlay', response_model=InboundOverlay)
-async def connection_inbound_overlay(connection_id: str, session: SessionDep):
+async def connection_inbound_overlay(connection_id: str, session: SessionDep, start: date | None = None, end: date | None = None):
     if await session.get(CalendarConnection, connection_id) is None:
         raise HTTPException(status_code=404, detail="Calendar connection not found")
-    return await inbound_overlay(session, connection_id)
+    return await inbound_overlay(session, connection_id, start, end)

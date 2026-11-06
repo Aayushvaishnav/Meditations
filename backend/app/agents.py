@@ -97,8 +97,14 @@ class CaptureOutput(BaseModel):
     journal_snippet: str = Field(default="", description="Short neutral note worth keeping in today's journal")
 
 
+class BriefingRecommendation(BaseModel):
+    text: str
+    task_id: str | None = Field(default=None, description="Supplied task ID, or null for a general recommendation")
+
+
 class BriefingOutput(BaseModel):
     top_focus: list[str] = Field(description="The Top 3 priorities for today, each one concrete sentence")
+    recommendations: list[BriefingRecommendation] = Field(default_factory=list)
     reasoning: str = Field(default="", description="Why these three, referencing capacity and carry-over")
 
 
@@ -192,6 +198,9 @@ BRIEFING_SYSTEM = (
     " due tasks and yesterday's reflection, choose the Top 3 priorities that make today a success."
     " Each is one concrete sentence, ideally tied to a specific task. Consider capacity honestly:"
     " three achievable items beat seven aspirational ones."
+    " Return top_focus strings and recommendations in the same order with identical text."
+    " Each recommendation has text and task_id: use only an ID from overdue_tasks or due_today,"
+    " or null for general advice. Never infer or invent task IDs."
 )
 
 ASK_SYSTEM = (

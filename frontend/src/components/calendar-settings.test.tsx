@@ -253,7 +253,20 @@ it("distinguishes acknowledged remote removal from queued deletion and deliberat
   const option = await screen.findByRole("option", { name: /Prepare presentation.*Remote removal complete/ })
   expect((option as HTMLOptionElement).disabled).toBe(false)
   expect(screen.getByText("Remote removal complete", { exact: true })).toBeTruthy()
-  expect(screen.getByText("pending · removal queued", { exact: true })).toBeTruthy()
+  expect(screen.getByText("Remote removal queued", { exact: true })).toBeTruthy()
   expect(screen.getByText("Detached; further sync stopped", { exact: true })).toBeTruthy()
   expect(screen.getByText(/Earlier sync time unavailable/)).toBeTruthy()
+})
+
+it("does not present a synced state label as acknowledgement of a newer local revision", async () => {
+  vi.mocked(api.get).mockImplementation(async path => {
+    if (path === "/calendar/connections") return [connection]
+    if (path.endsWith("/links")) return [{ id: "link", connection_id: "one", local_block_id: "block", selection_state: "opted_in", state: "synced", desired_action: "upsert", acknowledged_action: "upsert", local_revision: 3, acknowledged_revision: 2, last_error: null }]
+    if (path.endsWith("/status")) return { connection, queued_count: 1, conflict_count: 0, error_count: 0, last_success_state: "never", last_success_at: null }
+    return []
+  })
+  render(<CalendarSettings />, { wrapper })
+  expect(await screen.findByText("Local changes queued", { exact: true })).toBeTruthy()
+  expect(screen.queryByText("Remote change acknowledged", { exact: true })).toBeNull()
+  expect(screen.getByRole("button", { name: "Sync now" })).toBeTruthy()
 })

@@ -1,3 +1,4 @@
+import { ScoreDisplayPreference } from "@/components/score-display"
 import { useState } from "react"
 import {
   Bot,
@@ -333,7 +334,7 @@ function SearchCard() {
   const reindex = useReindex()
   return (
     <Card title="Search index" icon={Search}>
-      <div className="flex items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="outline">FTS5 keyword: on</Badge>
         <Badge variant="outline">{status.data?.semantic ? "Semantic (local embeddings): on" : "Semantic: off"}</Badge>
         <span className="text-xs text-muted-foreground">{status.data?.indexed_docs ?? "…"} documents indexed</span>
@@ -375,7 +376,7 @@ function AppearanceCard() {
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <Button variant="outline" size="sm" className="w-60 justify-between" aria-label={`Theme: ${current.label}`} />
+            <Button variant="outline" size="sm" className="w-full max-w-60 justify-between" aria-label={`Theme: ${current.label}`} />
           }
         >
           <span className="flex items-center gap-2">
@@ -394,6 +395,7 @@ function AppearanceCard() {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      <div className="mt-4"><ScoreDisplayPreference /></div>
     </Card>
   )
 }
@@ -401,11 +403,11 @@ function AppearanceCard() {
 export function SettingsView() {
   return (
     <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-      <div className="mx-auto flex w-full max-w-3xl flex-col px-6 pt-5 pb-10">
+      <div className="@container mx-auto flex w-full max-w-3xl flex-col px-6 pt-5 pb-10">
       <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
       <div className="mt-4 grid gap-4">
         <AISettingsCard />
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 @2xl:grid-cols-2">
           <UsageCard />
           <PrefsCard />
         </div>
@@ -415,7 +417,7 @@ export function SettingsView() {
         <CalendarSettings />
         <WebhookSettings />
         <PromptsCard />
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 @2xl:grid-cols-2">
           <AppearanceCard />
           <SearchCard />
         </div>

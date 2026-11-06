@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware"
 
 export type MainView = "list" | "board" | "calendar"
 export type CalendarMode = "year" | "month" | "week" | "agenda" | "multi-day" | "multi-week"
+export type ScoreDisplay = "scored" | "reflection"
 export type Theme = "dark" | "light" | "tokyo-night" | "rose-pine" | "gruvbox" | "dracula" | "nord" | "ayu"
 export type SmartView = "today" | "overdue" | "upcoming" | "all" | "completed"
 export type Section = "tasks" | "matrix" | "journal" | "second_brain" | "insights" | "settings"
@@ -21,6 +22,8 @@ export const THEMES: { id: Theme; label: string; dark: boolean }[] = [
 export type Scope = { kind: "smart"; id: SmartView } | { kind: "list"; id: string }
 
 interface UiState {
+  scoreDisplay: ScoreDisplay
+  setScoreDisplay: (display: ScoreDisplay) => void
   section: Section
   sidebar: "expanded" | "collapsed"
   setSidebar: (sidebar: "expanded" | "collapsed") => void
@@ -49,6 +52,8 @@ interface UiState {
 export const useUi = create<UiState>()(
   persist(
     (set) => ({
+      scoreDisplay: "scored",
+      setScoreDisplay: (scoreDisplay) => set({ scoreDisplay }),
       sidebar: "expanded",
       setSidebar: (sidebar) => set({ sidebar }),
       section: "tasks",
@@ -74,17 +79,19 @@ export const useUi = create<UiState>()(
       name: "journal-ui",
       merge: (persisted, current) => {
         const saved = persisted as (Omit<Partial<UiState>, "view"> & { view?: MainView | "matrix" }) | undefined
+        const scoreDisplay = saved?.scoreDisplay === "reflection" ? "reflection" : "scored"
         if (saved?.view === "matrix") {
           return {
             ...current,
             ...saved,
+            scoreDisplay,
             view: "list",
             section: saved.section === "tasks" ? "matrix" : saved.section ?? current.section,
           }
         }
-        return { ...current, ...saved, view: saved?.view ?? current.view }
+        return { ...current, ...saved, scoreDisplay, view: saved?.view ?? current.view }
       },
-      partialize: (s) => ({ sidebar: s.sidebar, section: s.section, view: s.view, calendarMode: s.calendarMode, scope: s.scope, theme: s.theme }),
+      partialize: (s) => ({ scoreDisplay: s.scoreDisplay, sidebar: s.sidebar, section: s.section, view: s.view, calendarMode: s.calendarMode, scope: s.scope, theme: s.theme }),
     },
   ),
 )

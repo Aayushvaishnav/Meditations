@@ -5,7 +5,8 @@ import json
 import pytest
 
 import app.agents as agents
-from app.routers import agents as agent_routes, scores as score_routes
+from app import ai_orchestration as agent_routes
+from app.routers import scores as score_routes
 from app.scoring import DailyMetrics
 
 DAY = "2026-09-14"

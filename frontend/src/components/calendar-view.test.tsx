@@ -67,10 +67,10 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe("calendar task context", () => {
-  it("follows selected list and title/tag search through the application", () => {
+  it("follows selected list and title/tag search through the application", async () => {
     mocks.tasks = [task("Planning", { list_id: "work" }), task("Other", { list_id: "home" }), task("Review", { list_id: "work", tags: ["PLAN"] })]
     useUi.setState({ scope: { kind: "list", id: "work" }, search: "plan" })
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     expect(screen.getByRole("button", { name: /^Planning/ })).toBeTruthy()
     expect(screen.getByRole("button", { name: /^Review/ })).toBeTruthy()
     expect(screen.queryByRole("button", { name: /^Other/ })).toBeNull()
@@ -85,7 +85,7 @@ describe("calendar task context", () => {
     { scope: "upcoming", visible: ["tomorrow", "future"] },
     { scope: "all", visible: ["overdue", "today", "tomorrow", "future"] },
     { scope: "completed", visible: ["done"] },
-  ] as const)("matches $scope smart scope and excludes canceled tasks", ({ scope, visible }) => {
+  ] as const)("matches $scope smart scope and excludes canceled tasks", async ({ scope, visible }) => {
     mocks.tasks = [
       task("overdue", { due_date: new Date(2026, 2, 6, 23, 59).toISOString() }),
       task("today", { due_date: new Date(2026, 2, 7, 0).toISOString() }),
@@ -93,15 +93,15 @@ describe("calendar task context", () => {
       task("done", { status: "completed" }), task("canceled", { status: "canceled" }), task("undated", { due_date: null }),
     ]
     useUi.setState({ scope: { kind: "smart", id: scope } })
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     for (const id of ["overdue", "today", "tomorrow", "future", "done", "canceled", "undated"]) {
       expect(screen.queryByRole("button", { name: new RegExp(`^${id}`) }) !== null, id).toBe((visible as readonly string[]).includes(id))
     }
   })
 
-  it("creates on the selected local date in the selected list", () => {
+  it("creates on the selected local date in the selected list", async () => {
     useUi.setState({ scope: { kind: "list", id: "work" } })
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Add task on 2026-03-08" }))
     const input = screen.getByRole("textbox")
     fireEvent.change(input, { target: { value: "  New task  " } })
@@ -110,8 +110,8 @@ describe("calendar task context", () => {
     expect((input as HTMLInputElement).value).toBe("")
   })
 
-  it("creates an unassigned task from a smart scope and ignores blank titles", () => {
-    render(<App />)
+  it("creates an unassigned task from a smart scope and ignores blank titles", async () => {
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Add task on 2026-03-08" }))
     const input = screen.getByRole("textbox")
     fireEvent.change(input, { target: { value: "  " } })
@@ -124,11 +124,11 @@ describe("calendar task context", () => {
 })
 
 describe("calendar dates and rescheduling", () => {
-  it("groups naive UTC instants by local date and sorts by time", () => {
+  it("groups naive UTC instants by local date and sorts by time", async () => {
     mocks.tasks = [task("Late", { due_date: new Date(2026, 2, 8, 23, 59).toISOString().slice(0, -1) }),
       task("Early", { due_date: new Date(2026, 2, 8, 0, 1).toISOString().slice(0, -1) }),
       task("Next day", { due_date: new Date(2026, 2, 9, 0).toISOString().slice(0, -1) }), task("Invalid", { due_date: "invalid" })]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     expect(cell("2026-03-08").getAllByRole("button").slice(1).map(button => button.textContent)).toEqual([
       expect.stringContaining("Early"), expect.stringContaining("Late"),
     ])
@@ -141,19 +141,19 @@ describe("calendar dates and rescheduling", () => {
     { month: 9, from: 31, to: 1, hour: 9, minute: 15 },
     { month: 9, from: 31, to: 1, hour: 1, minute: 30 },
     { month: 2, from: 7, to: 8, hour: 2, minute: 30 },
-  ])("preserves local clock intent across calendar moves: %j", ({ month, from, to, hour, minute }) => {
+  ])("preserves local clock intent across calendar moves: %j", async ({ month, from, to, hour, minute }) => {
     const source = new Date(2026, month, from, hour, minute, 42, 123)
     const target = new Date(2026, to === 1 ? month + 1 : month, to)
     mocks.tasks = [task("Move", { due_date: source.toISOString() })]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     drop("Move", target)
     const expected = new Date(target.getFullYear(), target.getMonth(), target.getDate(), hour, minute, 42, 123)
     expect(mocks.update).toHaveBeenCalledWith({ id: "Move", patch: { deadline: { kind: "timed", at: expected.toISOString() } } })
   })
 
-  it("ignores canceled drops, other targets, unknown tasks, unscheduled tasks and same-day moves", () => {
+  it("ignores canceled drops, other targets, unknown tasks, unscheduled tasks and same-day moves", async () => {
     mocks.tasks = [task("Move"), task("Undated", { due_date: null })]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     drop("Move", undefined)
     drop("Move", new Date(2026, 2, 10), "other")
     drop("missing", new Date(2026, 2, 10))
@@ -162,17 +162,17 @@ describe("calendar dates and rescheduling", () => {
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
-  it("removes a task date from the selected day's dialog", () => {
+  it("removes a task date from the selected day's dialog", async () => {
     mocks.tasks = [task("Scheduled")]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Add task on 2026-03-08" }))
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "clear deadline" }))
     expect(mocks.update).toHaveBeenCalledWith({ id: "Scheduled", patch: { deadline: { kind: "none" } } })
   })
 
-  it("navigates year boundaries and returns to today's month", () => {
+  it("navigates year boundaries and returns to today's month", async () => {
     vi.setSystemTime(new Date(2026, 11, 31, 12))
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Next month" }))
     expect(screen.getByRole("button", { name: "Add task on 2027-01-31" })).toBeTruthy()
     fireEvent.click(screen.getByRole("button", { name: "Previous month" }))
@@ -184,12 +184,12 @@ describe("calendar dates and rescheduling", () => {
 })
 
 describe("explicit deadline intent", () => {
-  it("keeps date-only labels on the chosen day and shows timed 09:00 explicitly", () => {
+  it("keeps date-only labels on the chosen day and shows timed 09:00 explicitly", async () => {
     mocks.tasks = [
       task("Date only", { due_date: null, deadline: { kind: "date", date: "2026-03-08" } }),
       task("Timed", { due_date: new Date(2026, 2, 8, 9).toISOString() }),
     ]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     const buttons = cell("2026-03-08").getAllByRole("button").slice(1)
     expect(buttons.map(button => button.textContent)).toEqual([
       "Date onlyDue", expect.stringContaining("Timed"),
@@ -198,9 +198,9 @@ describe("explicit deadline intent", () => {
     expect(buttons[1].textContent).toContain(time)
   })
 
-  it("moves a date-only deadline without inventing a time or a work block", () => {
+  it("moves a date-only deadline without inventing a time or a work block", async () => {
     mocks.tasks = [task("Date only", { due_date: null, deadline: { kind: "date", date: "2026-03-08" } })]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     drop("Date only", new Date(2026, 2, 10))
     expect(mocks.update).toHaveBeenCalledWith({ id: "Date only", patch: { deadline: { kind: "date", date: "2026-03-10" } } })
   })
@@ -220,12 +220,12 @@ function dropBlock(id: string, day: string, target: Date) {
 }
 
 describe("calendar work blocks", () => {
-  it("shows multiple timed and all-day blocks independently of deadlines, with exclusive end occupancy", () => {
+  it("shows multiple timed and all-day blocks independently of deadlines, with exclusive end occupancy", async () => {
     mocks.tasks = [task("Owner", { due_date: null }), task("Due", { deadline: { kind: "date", date: "2026-03-12" } })]
     mocks.blocks = [allDayBlock("days", "Owner"),
       timedBlock("night", "Due", new Date(2026, 2, 8, 23), new Date(2026, 2, 9, 1)),
       timedBlock("midnight", "Owner", new Date(2026, 2, 8, 22), new Date(2026, 2, 9, 0))]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     expect(cell("2026-03-08").getAllByRole("button", { name: /work block/ })).toHaveLength(3)
     expect(cell("2026-03-09").getAllByRole("button", { name: /work block/ })).toHaveLength(2)
     expect(cell("2026-03-10").queryByRole("button", { name: /work block/ })).toBeNull()
@@ -233,12 +233,12 @@ describe("calendar work blocks", () => {
     expect(cell("2026-03-12").getByRole("button", { name: /DueDue/ })).toBeTruthy()
   })
 
-  it("applies list, title/tag search and terminal selection through block owners", () => {
+  it("applies list, title/tag search and terminal selection through block owners", async () => {
     mocks.tasks = [task("Planning", { list_id: "work" }), task("Tagged", { list_id: "work", tags: ["PLAN"] }),
       task("Other", { list_id: "home" }), task("Done", { status: "completed" }), task("Canceled", { status: "canceled" })]
     mocks.blocks = mocks.tasks.map(owner => allDayBlock(owner.id, owner.id))
     useUi.setState({ scope: { kind: "list", id: "work" }, search: "plan" })
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     expect(cell("2026-03-08").getAllByRole("button", { name: /work block/ }).map(button => button.getAttribute("aria-label"))).toEqual([
       expect.stringContaining("Planning"), expect.stringContaining("Tagged"),
     ])
@@ -247,29 +247,29 @@ describe("calendar work blocks", () => {
     expect(cell("2026-03-08").getByRole("button", { name: /Done, work block/ })).toBeTruthy()
   })
 
-  it("fully replaces a dragged timed block, preserving duration and leaving the deadline alone", () => {
+  it("fully replaces a dragged timed block, preserving duration and leaving the deadline alone", async () => {
     mocks.tasks = [task("Owner")]
     mocks.blocks = [timedBlock("timed", "Owner", new Date(2026, 2, 8, 9, 15), new Date(2026, 2, 8, 10, 45))]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     dropBlock("timed", "2026-03-08", new Date(2026, 2, 10))
     expect(mocks.replace).toHaveBeenCalledExactlyOnceWith({ id: "timed", input: { kind: "timed", task_id: "Owner", timezone: "Asia/Kolkata",
       start_at: new Date(2026, 2, 10, 9, 15).toISOString(), end_at: new Date(2026, 2, 10, 10, 45).toISOString() } })
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
-  it("uses continuation drag delta while keeping all-day blocks date-only", () => {
+  it("uses continuation drag delta while keeping all-day blocks date-only", async () => {
     mocks.tasks = [task("Owner")]
     mocks.blocks = [allDayBlock("days", "Owner")]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     dropBlock("days", "2026-03-09", new Date(2026, 2, 12))
     expect(mocks.replace).toHaveBeenCalledExactlyOnceWith({ id: "days", input: { kind: "all_day", task_id: "Owner", start_date: "2026-03-11", end_date: "2026-03-13" } })
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
-  it("offers a focusable date input and Move block action without dragging", () => {
+  it("offers a focusable date input and Move block action without dragging", async () => {
     mocks.tasks = [task("Owner", { due_date: null })]
     mocks.blocks = [allDayBlock("days", "Owner")]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(cell("2026-03-08").getByRole("button", { name: /Owner, work block/ }))
     const dialog = within(screen.getByRole("dialog"))
     const input = dialog.getByLabelText("New start date for Owner block days")
@@ -282,11 +282,11 @@ describe("calendar work blocks", () => {
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
-  it("disables block chips, dialog moves and drag changes during replacement", () => {
+  it("disables block chips, dialog moves and drag changes during replacement", async () => {
     mocks.tasks = [task("Owner")]
     mocks.blocks = [allDayBlock("days", "Owner")]
     mocks.replacePending = true
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     expect((cell("2026-03-08").getByRole("button", { name: /Owner, work block/ }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(screen.getByRole("button", { name: "Add task on 2026-03-08" }))
     const dialog = within(screen.getByRole("dialog"))
@@ -298,9 +298,10 @@ describe("calendar work blocks", () => {
     expect(mocks.replace).not.toHaveBeenCalled()
   })
 
-  it("shows query loading and retries block query errors", () => {
+  it("shows query loading and retries block query errors", async () => {
     mocks.blocksPending = true
-    const view = render(<App />)
+    let view!: ReturnType<typeof render>
+    await act(async () => { view = render(<App />); await import("@/components/calendar-view") })
     expect(screen.getByRole("status")).toBeTruthy()
     mocks.blocksPending = false
     mocks.blocksError = true
@@ -311,10 +312,10 @@ describe("calendar work blocks", () => {
 })
 
 
-it("registers distinct drag identities for each continuation while retaining block identity", () => {
+it("registers distinct drag identities for each continuation while retaining block identity", async () => {
   mocks.tasks = [task("Owner")]
   mocks.blocks = [{ id: "span", task_id: "Owner", kind: "all_day", start_date: "2026-03-07", end_date: "2026-03-10", timezone: null, start_at: null, end_at: null, created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00" }]
-  render(<App />)
+  await act(async () => { render(<App />); await import("@/components/calendar-view") })
   const segments = vi.mocked(useDraggable).mock.calls.map(([options]) => options).filter(options => options.data?.blockId === "span")
   expect(segments).toHaveLength(3)
   expect(new Set(segments.map(segment => segment.id)).size).toBe(3)
@@ -323,14 +324,14 @@ it("registers distinct drag identities for each continuation while retaining blo
 
 
 describe("calendar export context", () => {
-  it("offers only month-overlapping blocks from matching owners, without deadlines or spillover days", () => {
+  it("offers only month-overlapping blocks from matching owners, without deadlines or spillover days", async () => {
     mocks.tasks = [task("Planning", { list_id: "work" }), task("Other", { list_id: "home" }), task("Deadline only", { list_id: "work" })]
     mocks.blocks = [allDayBlock("inside", "Planning"),
       { ...allDayBlock("outside", "Planning"), start_date: "2026-04-01", end_date: "2026-04-02" },
       { ...allDayBlock("overlap", "Planning"), start_date: "2026-02-28", end_date: "2026-03-02" },
       allDayBlock("hidden", "Other")]
     useUi.setState({ scope: { kind: "list", id: "work" }, search: "" })
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Export work blocks" }))
     const panel = within(screen.getByRole("region", { name: "Calendar export" }))
     expect(panel.getAllByRole("checkbox")).toHaveLength(2)
@@ -340,10 +341,10 @@ describe("calendar export context", () => {
     expect(mocks.exportCalendar).toHaveBeenCalledExactlyOnceWith(["inside", "overlap"])
   })
 
-  it.each(["month", "scope", "search"])("clears opt-in selection when %s changes", change => {
+  it.each(["month", "scope", "search"])("clears opt-in selection when %s changes", async change => {
     mocks.tasks = [task("Owner")]
     mocks.blocks = [allDayBlock("block", "Owner")]
-    render(<App />)
+    await act(async () => { render(<App />); await import("@/components/calendar-view") })
     fireEvent.click(screen.getByRole("button", { name: "Export work blocks" }))
     fireEvent.click(screen.getByRole("checkbox"))
     if (change === "month") fireEvent.click(screen.getByRole("button", { name: "Next month" }))

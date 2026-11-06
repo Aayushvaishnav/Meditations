@@ -172,10 +172,17 @@ export interface DailyScoreResponse {
   saved_review_score: number | null
   persisted: boolean
   feedback: string | null
+  suggested_action_for_tomorrow?: string
   insight: string | null
 }
 
+export interface BriefingRecommendation {
+  text: string
+  task_id: string | null
+}
+
 export interface Briefing {
+  recommendations?: BriefingRecommendation[]
   top_focus: string[]
   reasoning: string
   overdue_count: number

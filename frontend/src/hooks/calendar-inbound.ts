@@ -1,3 +1,4 @@
+import { overlayWindowQuery, type CalendarOverlayWindow } from "@/lib/calendar-overlay-window"
 import { useEffect } from "react"
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { api } from "@/api/client"
@@ -7,14 +8,14 @@ import type { InboundOverlay } from "@/api/calendar-inbound-types"
 export const calendarInboundKey = ["calendar-inbound"] as const
 export type LiveSelection = { kind: "none" } | { kind: "connection"; id: string }
 
-export function useInboundOverlay(selection: LiveSelection) {
+export function useInboundOverlay(selection: LiveSelection, window?: CalendarOverlayWindow) {
   return useQuery({
-    queryKey: [...calendarInboundKey, "overlay", selection],
+    queryKey: [...calendarInboundKey, "overlay", selection, window ?? { kind: "inventory" }],
     enabled: selection.kind === "connection",
     refetchInterval: 10_000,
     queryFn: () => {
       if (selection.kind !== "connection") throw new Error("Choose a connected calendar first")
-      return api.get<InboundOverlay>(`/calendar/connections/${encodeURIComponent(selection.id)}/inbound/overlay`)
+      return api.get<InboundOverlay>(`/calendar/connections/${encodeURIComponent(selection.id)}/inbound/overlay${overlayWindowQuery(window)}`)
     },
   })
 }

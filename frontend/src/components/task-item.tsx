@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { BulkTaskCheckbox } from "@/components/bulk-tasks"
+import { useBulkSelecting } from "@/hooks/bulk-selection"
 import { motion } from "framer-motion"
 import { CalendarDays, ChevronDown, ChevronRight, MoreHorizontal, Pencil, Plus, Repeat2, Sparkles, Timer } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -209,6 +211,7 @@ export function TaskItem({
   actionsVisible?: boolean
   showCompletedDeadline?: boolean
 }) {
+  const bulkSelecting = useBulkSelecting()
   const [expanded, setExpanded] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(task.title)
@@ -236,7 +239,8 @@ export function TaskItem({
           <span className="w-4" />
         )}
 
-        <span className="mt-1.5">
+        <span className="mt-1.5 flex gap-2.5">
+          <BulkTaskCheckbox task={task} />
           <TaskCheckbox task={task} />
         </span>
 
@@ -317,7 +321,7 @@ export function TaskItem({
         </div>
       </div>
 
-      {expanded ? (
+      {expanded || bulkSelecting ? (
         <div className="ml-10 border-l-[var(--glass-border)] pl-3 pb-1">
           {subtasks.map((child) => (
             <TaskItem key={child.id} task={child} subtasks={[]} lists={lists} />

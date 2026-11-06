@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -76,6 +77,30 @@ def _smoke_calendar_import(request, require) -> None:
     finally:
         request('DELETE', path, 204)
 
+def _smoke_restore(binary: Path, backup: Path, target: Path, env: dict[str, str],
+                   list_id: str, task_id: str) -> None:
+    result = subprocess.run(
+        [str(binary), "restore", str(backup), "--database", str(target)],
+        cwd=backup.parent, env={**env, "JOURNAL_DB_PATH": str(target)},
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+    )
+    if result.returncode != 0:
+        raise SmokeError(f"offline restore failed (exit {result.returncode}):\n{result.stdout}")
+    if not target.is_file():
+        raise SmokeError("offline restore did not create the target database")
+    with sqlite3.connect(target.as_uri() + "?mode=ro", uri=True) as connection:
+        if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise SmokeError("restored database failed integrity check")
+        if connection.execute("PRAGMA foreign_key_check").fetchall():
+            raise SmokeError("restored database failed foreign key check")
+        row = connection.execute(
+            "SELECT tasks.title, lists.name FROM tasks JOIN lists ON tasks.list_id = lists.id "
+            "WHERE tasks.id = ? AND lists.id = ?", (task_id, list_id),
+        ).fetchone()
+        if row != ("Recovery task", "Recovery list"):
+            raise SmokeError("restored database is missing the linked source data")
+
+
 def smoke(binary: Path, startup_timeout: float = 60.0,
           calendar_server_url: str | None = None, calendar_import: bool = False) -> None:
     if calendar_server_url is not None:
@@ -135,7 +160,7 @@ def smoke(binary: Path, startup_timeout: float = 60.0,
 
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-            def request(method: str, path: str, expected: int, payload=None):
+            def request(method: str, path: str, expected: int, payload=None, *, raw=False):
                 data = None if payload is None else json.dumps(payload).encode()
                 req = urllib.request.Request(base + path, data=data, method=method,
                                              headers={"Content-Type": "application/json"})
@@ -144,9 +169,13 @@ def smoke(binary: Path, startup_timeout: float = 60.0,
                 except urllib.error.HTTPError as error:
                     response = error
                 with response:
-                    body = response.read().decode()
+                    body_bytes = response.read()
                     if response.status != expected:
+                        body = body_bytes.decode(errors="replace")
                         raise SmokeError(f"{method} {path}: expected {expected}, got {response.status}: {body}")
+                    if raw:
+                        return body_bytes
+                    body = body_bytes.decode()
                     if expected == 204:
                         return None
                     try:
@@ -176,6 +205,11 @@ def smoke(binary: Path, startup_timeout: float = 60.0,
                 _smoke_calendar(request, require, calendar_server_url)
             if calendar_import:
                 _smoke_calendar_import(request, require)
+            recovery_list = request("POST", "/api/lists", 201, {"name": "Recovery list"})
+            recovery_task = request("POST", "/api/tasks", 201,
+                                    {"title": "Recovery task", "list_id": recovery_list["id"]})
+            backup = root / "backup.db"
+            backup.write_bytes(request("POST", "/api/backup", 200, raw=True))
             # Even empty journal text reaches optional embeddings; omit journal writes.
             require(db.is_file() and db.stat().st_size > 0, "isolated database was not created")
             require(process.poll() is None, "backend exited during smoke checks")
@@ -192,6 +226,12 @@ def smoke(binary: Path, startup_timeout: float = 60.0,
             reader.join(timeout=5)
             if process.stdout is not None:
                 process.stdout.close()
+        if failure is None:
+            try:
+                _smoke_restore(binary, backup, root / "restored.db", env,
+                               recovery_list["id"], recovery_task["id"])
+            except Exception as error:
+                failure = error
         if failure is not None:
             raise SmokeError(f"{failure}\n--- backend logs ---\n{''.join(logs)}") from failure
 
