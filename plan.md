@@ -1,4 +1,30 @@
-# Architecture & Implementation Plan: Modern Todo, Journaling & AI Life-Operating System
+# Journal architecture and implementation record
+
+## Document status and ownership
+
+This is the authoritative architecture reference for the current worktree, including
+implemented changes that have not yet been committed or released. It does not
+certify that an installed package contains those changes.
+
+- Sections 2–6 and 7 describe shipped source contracts and their implementation
+  locations. Explicitly labeled proposals and deferred items are outside that scope.
+- Section 1 records product goals, not performance guarantees. Section 5's SQL is
+  a partial schema illustration; ordered migrations and models define the full schema.
+- Section 8 preserves the historical delivery roadmap, not the active backlog.
+- Sections 9–10 describe current development, verification, and release procedures.
+- [README.md](README.md) is the user/setup guide; [backend/README.md](backend/README.md)
+  documents API and recovery operations. Dependency manifests and lockfiles define
+  supported versions instead of copied dependency lists in this document.
+- The local [feature backlog](features/todo.md) records implementation and QA
+  evidence. The local [review plan](features/plan.md) preserves findings and future
+  proposals; it is not another shipped-architecture specification. These ignored
+  files may be absent from a fresh clone. The former root `todo.md` is absent and
+  is not required to use the architecture reference.
+
+Verification results are dated evidence, not permanent test-count guarantees.
+Native development-shell, extracted-package, host-installation, physical-input,
+assistive-technology, and real-provider acceptance are separate scopes; passing
+unit tests or a sidecar smoke test does not establish them.
 
 ---
 
@@ -12,29 +38,33 @@ This project is a modern, unified personal operating system combining:
 ### Core Philosophy
 * **Frictionless Capture**: Task input must take under 3 seconds using inline shorthand (`buy milk tomorrow 5pm !1 #personal`).
 * **Bounded Context Memory ($O(1)$ Token Growth)**: Raw journal entries are never re-read forever. Older days collapse into weekly summaries; weeks collapse into monthly reviews. The agent's token budget remains constant whether on Day 10 or Year 5.
-* **Deterministic Scoring Over Hallucinated Scores**: Productivity scores are calculated mathematically from structured telemetry (completion rate, deep-work hours, streak multipliers), while the LLM acts as an analytical mentor providing qualitative feedback and trend diagnosis.
+* **Deterministic Scoring Over Hallucinated Scores**: Productivity scores are calculated mathematically from structured telemetry (completion rate, deep-work hours, habit completion), while the LLM acts as an analytical mentor providing qualitative feedback and trend diagnosis.
 * **Local-First & Privacy-Focused**: Powered by SQLite (WAL mode) with optional local vector embeddings and local LLM support (Ollama), running seamlessly on EndeavourOS / Linux with minimal resource footprint.
 
 ---
 
-## 2. Recommended Modern Tech Stack
+## 2. Implemented technology stack
 
-### 2.1 Technology Matrix
+### 2.1 Technology matrix
 
-| Layer | Recommended Choice | Rationale & Alternatives Considered |
+| Layer | Implemented choice | Source of truth |
 |---|---|---|
-| **Frontend Framework** | **React 19 + Vite** (or **Next.js 15 App Router**) + **Tauri v2** | Blazing fast development, minimal memory (~40MB RAM under Tauri vs 400MB+ under Electron). Tauri v2 allows native desktop global shortcuts (e.g., `Super+Shift+A` for instant quick-add) and system tray integration on Linux. |
-| **Styling & UI Kit** | **Tailwind CSS v4** + **shadcn/ui** (Radix UI) + **Framer Motion** | Dark glass aesthetic, keyboard-accessible primitives, zero runtime CSS bloat, and fluid micro-interactions (strikethroughs, drag handles, modal drawers). |
-| **Rich-Text Editor** | **TipTap v2** (ProseMirror wrapper) | Industry standard for Notion/TickTick-like editors. Extensible for slash commands (`/task`, `/callout`), markdown shortcuts, task list checkboxes, and inline AI completion. |
-| **Date & Syntax NLP** | **chrono-node** | Instant client-side natural language date parsing (`tomorrow at 5pm`, `every mon, wed`) without network latency. |
-| **Drag & Drop** | **@dnd-kit/core** + **@dnd-kit/sortable** | Accessible, performant, mobile-friendly drag-and-drop for Kanban boards, Eisenhower matrices, and task reordering. |
-| **State & Data Fetching**| **TanStack Query (React Query v5)** + **Zustand** | Optimistic mutations for 0ms task completion latency, offline caching, and lightweight state for timers/filters. |
-| **Backend API** | **FastAPI (Python 3.12+)** with `uvicorn` | First-class ecosystem for AI agent orchestration, asynchronous endpoints, Pydantic v2 data validation, and native SQLite integration. |
-| **Database** | **SQLite (WAL Mode)** + **SQLModel** (or **SQLAlchemy 2.0 Async**) | Single-file zero-ops database, microsecond queries, ACID compliance, zero maintenance overhead, and privacy-preserving. |
-| **Search & Vectors** | **sqlite-vec** + **SQLite FTS5** | Hybrid full-text keyword search (FTS5) plus native vector similarity embeddings (`sqlite-vec`) in the same database without running external Chroma/Qdrant services. |
-| **AI Agent Framework** | **PydanticAI** (Primary) + **LiteLLM** | Modern, strictly typed agent framework with type-safe dependency injection, structured tool calls, and model-agnostic switching (Claude, OpenAI, DeepSeek, Groq, or local Ollama). Fully configurable custom `base_url` and `api_key`. |
-| **Local Model / Offline**| **Ollama** (`llama3.2:3b` / `qwen2.5:7b`) + **fastembed** | Zero-cost local inference via OpenAI-compatible `base_url` (`http://localhost:11434/v1`), offline tagging, and on-device text embeddings (`bge-small-en-v1.5`). |
-| **System Orchestration**| **Backend lifecycle worker** | Database-local UTC review scheduling with durable catch-up; enabled in the packaged sidecar, opt-in for standalone backends. |
+| Frontend | React 19, Vite 8, TypeScript, Tauri v2 | `frontend/package.json`, `frontend/src-tauri/Cargo.toml` |
+| Styling and UI | Tailwind CSS v4, shadcn v4 components using Base UI, Framer Motion, Lucide | `frontend/package.json`, `frontend/src/components/ui/` |
+| Rich-text editor | TipTap v3, StarterKit, task lists from `@tiptap/extension-list`, `tiptap-markdown` | `frontend/src/components/journal/extensions.ts` |
+| Date parsing | chrono-node 2.x with local parsing corrections | `frontend/src/lib/parsing.ts` |
+| Drag and drop | dnd-kit core and sortable | `frontend/package.json` |
+| State and fetching | TanStack Query v5 and Zustand | `frontend/src/hooks/` domain modules (`api.ts` compatibility exports), `frontend/src/stores/` |
+| Backend | Python 3.12+, FastAPI, Pydantic v2, uvicorn | `backend/pyproject.toml`, `backend/uv.lock` |
+| Database | SQLite WAL, SQLModel and async SQLAlchemy/aiosqlite | `backend/app/db.py`, `backend/app/models.py`, `backend/app/migrations/` |
+| Search | SQLite FTS5, sqlite-vec, optional fastembed inference on a serialized worker | `backend/app/search.py`, `backend/app/embedding_worker.py` |
+| AI | PydanticAI v2 API, OpenAI-compatible or Anthropic provider objects, resilient model wrapper | `backend/app/ai_factory.py`, `backend/uv.lock` |
+| Scheduling | Backend lifecycle review worker with database-local UTC catch-up | `backend/app/review_scheduler.py` |
+
+Next.js, Radix UI, and LiteLLM were considered in the initial proposal but are
+not the implemented stack. Ollama is the default local AI endpoint; hosted
+providers are optional configuration. Model availability and provider-specific
+behavior require separate verification.
 
 ---
 
@@ -55,10 +85,10 @@ A key requirement is total freedom of model backend. You shouldn't be locked int
    - **Groq / Together / DeepSeek / Mistral / vLLM**: Any OpenAI-compatible endpoint.
    - **Official OpenAI / Anthropic**: Native default base URLs.
 2. **Dynamic API Key Management**:
-   - Primary: `.env` environment variables (`AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL_NAME`).
-   - App Settings: An optional `app_settings` table in SQLite so keys and endpoints can be updated directly from the frontend UI settings drawer without restarting backend services.
+   - Environment defaults: `AI_API_KEY`, `AI_BASE_URL`, `AI_MODEL_NAME` (or `backend/.env` when running from `backend/`).
+   - Settings overrides: persisted `app_settings` values take precedence on request paths; changes do not require a backend restart.
 3. **PydanticAI Dynamic Model Loader**:
-   - Supports instantiating `OpenAIModel` with custom `base_url` and `api_key`, or `AnthropicModel`, or fallbacks with automatic failover.
+   - `create_agent_model()` constructs `OpenAIChatModel` with `OpenAIProvider`, or `AnthropicModel` with `AnthropicProvider`. `ResilientModel` retries transient failures; it does not automatically switch providers. Request paths load database settings before model construction.
 
 ### 3.3 The Hierarchical Compaction Engine
 
@@ -67,10 +97,10 @@ The core problem of AI journaling is context bloat. As time progresses, feeding 
 ```
 [ Day 1 .. Day 7 Raw Entries ] ──► Daily Agent (Reads today + last 6d + last week summary)
              │
-             ▼ (End of Week Cron)
+             ▼ (Closed UTC Week)
   [ Weekly Summary Compacted ] ──► Weekly Agent (Reads 7 daily scores + last 4 weekly summaries)
              │
-             ▼ (End of Month Cron)
+             ▼ (Closed UTC Month)
  [ Monthly Review Compacted ]  ──► Monthly Agent (Reads 4 weekly summaries + last 3 monthly summaries)
 ```
 
@@ -176,7 +206,7 @@ or rewritten.
 │  │     (Optimistic UI updates, Pomodoro clock)│                        │
 │  └────────────────────────────────────────────┘                        │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ HTTP / REST / WebSocket
+                                    │ HTTP / REST / SSE
 ┌───────────────────────────────────▼────────────────────────────────────┐
 │                        BACKEND (FastAPI API)                           │
 │                                                                        │
@@ -208,6 +238,9 @@ or rewritten.
 ---
 
 ## 5. Database Schema Specification (SQLite)
+
+The SQL below illustrates core tables instead of providing a complete bootstrap script.
+Use the migrations and models for exact DDL, indexes, constraints, and auxiliary tables.
 
 Startup applies the ordered migrations in `backend/app/migrations/` before
 search initialization, requests, or startup jobs. `PRAGMA user_version` records
@@ -354,13 +387,23 @@ CREATE TABLE monthly_summaries (
 
 ## 6. Detailed Feature Specifications
 
-### 6.0 Frontend section loading (PERF-01)
+### 6.0 Frontend section and task-view loading (PERF-01, REV-13)
 
-`App.tsx` keeps the task views and shared shell eager. Journal, Insights,
-Second Brain, and Settings use module-scoped React lazy imports; TipTap and
-its editor dependencies load only when Journal is selected. Shared UI and API
-modules remain available to both the initial bundle and deferred sections.
+`App.tsx` keeps the List task view and shared shell eager. Matrix, Journal,
+Insights, Second Brain, and Settings use module-scoped React lazy imports;
+TipTap and its editor dependencies load only when Journal is selected.
+Calendar and Board load on first selection inside `TasksView`. Shared UI and
+API modules remain available to both the initial bundle and deferred sections.
 No manual vendor-chunk rules or additional dependencies are required.
+
+Within Tasks, a separate Suspense boundary keyed by task view owns only the
+view content, inside the API query boundary. Header, filter, and quick-add
+controls retain their identity and remain usable while a view loads. The
+existing Board or task skeleton supplies loading feedback; API loading/error
+states take precedence and do not request a view module. Resolving an abandoned
+view import does not navigate back to it. Loaded views receive current tasks,
+scope, and search, and modules are reused on subsequent visits. Calendar source
+opt-in still resets on a fresh Calendar mount, rather than on mode changes.
 
 A Suspense boundary keyed by section owns only the central content. Its
 fallback has a busy main landmark and a section-specific loading status;
@@ -371,15 +414,28 @@ resolution cannot change the selected section. Cached modules do not reload
 on revisits; section component state retains its existing unmount semantics.
 Persisted initial section selection uses the same loading path.
 
-Measured production initial JavaScript fell from 1,399,489 to 817,780 bytes
-minified (41.6%), including the entry's transitive static imports rather than
-only its main file. Deferred section chunks are approximately 549 KB for
-Journal, 9.9 KB for Insights, 7.9 KB for Second Brain, and 17.1 KB for Settings,
-plus shared dependencies as needed. Generate the build graph with
-`npm run build -- --manifest`; inspect `dist/.vite/manifest.json` and include
-all recursive `imports` when comparing initial bytes. These are build
-measurements, not network latency guarantees. The entry and Journal chunks
-still exceed Vite's 500 KB advisory threshold; it is not suppressed.
+PERF-01's historical build reduced production initial JavaScript from
+1,399,489 to 817,780 bytes minified (41.6%). REV-13 compares the later worktree
+before/after task-view splitting: 884,536 to 773,227 bytes minified (12.6%),
+including every transitive static import; gzip totals are 276,348 and 246,862
+bytes (10.7%). The main file alone falls from about 749 KB to 536 KB; Journal
+remains deferred at about 597 KB. These are profiling builds with identical
+manifest/sourcemap flags, rather than comparisons against the older baseline.
+Generate the build graph with `npm run build -- --manifest`; inspect
+`dist/.vite/manifest.json` and include all recursive `imports` when comparing
+initial bytes. The entry and Journal still exceed Vite's 500 KB advisory
+threshold; it is not suppressed.
+
+Five context-cold local Chromium samples with 200 synthetic tasks and a
+100-paragraph journal show median startup of 708 ms before and 687 ms after;
+that small difference is insufficient to claim a reliable runtime speedup.
+First Board/Calendar visits trade startup bytes for deferred loading: medians
+increase from 281/180 ms to 497/448 ms in a fixed Board-then-Calendar workflow;
+Calendar may reuse dependencies from Board. Journal opening remains 480 ms.
+Measurements include automation overhead and use unthrottled local preview,
+rather than representative hardware or native WebView performance. No warm
+switch, field Core Web Vitals, or low-end-device improvement is established.
+The benefit is reduced initial payload, with an explicit first-use latency cost.
 
 ### 6.0.1 Navigation, section widths and calendar source controls (NAV-01 / LAY-01 / CAL-01)
 
@@ -420,6 +476,46 @@ history is streamed as participation fields, while chart entry data stays bound
 to the selected period. This does not change score formulas, saved reviews or
 bounded AI context.
 
+#### Score display and reflection-first preference (REV-19)
+
+Settings → Appearance → **Score display** offers `scored | reflection`, persisted
+locally in the `journal-ui` store alongside theme and sidebar preferences.
+Existing preferences default to `scored`; invalid stored values normalize to that
+default, including the legacy Matrix-view migration. The preference survives
+navigation and reload; it is device-local instead of a server preference or an
+export/backup field. Settings card pairs use content-container breakpoints instead
+of viewport breakpoints so the expanded sidebar does not force narrow two-column
+controls; the theme trigger shrinks within its card.
+
+`components/score-display.tsx` owns the preference control and shared scoring
+explanation. Full task, focus and habit components contribute 40 + 35 + 15 = 90
+points before the bounded ±10 AI nudge; the final score is clamped to 0–100.
+Unscheduled habits and a disabled focus target receive their full components;
+zero completed tasks yield zero task points. No scoring or telemetry calculation
+changes with the display preference.
+
+Journal's day score remains a live recalculation from current activity and the
+current focus target, plus the latest saved AI nudge when present. Its separate
+saved review value is a snapshot replaced only when the review is rerun. Insights
+uses saved daily review snapshots where available and live deterministic scores
+for other days; seven-day averages aggregate those same values. Weekly/monthly
+score trends are saved rollup snapshots instead of live recalculations. Both
+surfaces explain this distinction rather than implying all displayed scores are
+current or all are frozen.
+
+Reflection-first removes structured final/saved scores, nudges, scoring
+explanations, daily-score charts, score averages and score-derived rollup trends
+from the rendered Journal/Insights UI and accessibility tree. The Journal card
+becomes **Day reflection**. The daily-review completion toast checks the current
+preference at completion, including a preference changed during streaming, and
+omits its numeric score in reflection-first mode. Mood/energy ratings, focus
+hours/targets, task and habit counts/rates, streaks, review progress/errors,
+recommendation actions and narrative text remain available. User/AI-authored
+prose, search excerpts and citations are left verbatim even if they mention
+numbers. This is a presentation boundary, not numeric-text filtering. Requests,
+review execution, score storage, exports, search and bounded AI context are
+unchanged; reflection-first does not disable scoring or AI reviews.
+
 The task calendar presents a closed-by-default **Calendar sources** disclosure
 with a compact selected-source/error/stale summary. Imported/live query owners
 remain mounted outside its visibility boundary: closing controls preserves
@@ -447,6 +543,38 @@ filters or scores. All six calendar modes share this source-selection contract.
 3. **Integrated Focus Engine (Pomodoro & Stopwatch)**:
    - Floating or full-screen focus timer linked to the active task.
    - Automatically writes finished session durations into `focus_sessions` and task `actual_minutes`.
+
+#### Bulk task organization (features/REV-18)
+
+List, Board, and the independent Matrix section share a view-local bulk-selection
+provider and toolbar. **Select tasks** exposes selection checkboxes separately
+from completion. Tab and Space operate the native checkboxes; Escape exits when
+idle. Selection is unpersisted and resets on view, section, scope, or filter
+navigation. Navigation during a batch stops unsent requests and shows a notice;
+an already submitted update still settles through the canonical mutation hook.
+Calendar and external events are outside bulk selection.
+
+**Select all visible** uses each rendered projection: List respects its 20
+completed-root cap and reveals immediate scoped subtasks during selection;
+Board respects its 30 Done-card cap and excludes subtasks; Matrix retains its
+active-task policy. Parents and children are selected independently. Temporary
+optimistic task IDs are ineligible. Shared pure List sections and Board columns
+keep rendering and selection boundaries consistent.
+
+Bulk actions assign a list (including No list), change status, or add/remove one
+tag. Each batch requires an inline confirmation; completing recurring tasks
+warns about successor creation. There is no automatic undo, since reopening an
+occurrence cannot retract a spawned successor or integration delivery. Existing
+server completion, recurrence, subtask, telemetry, and integration rules apply.
+
+Each task goes through the canonical optimistic update hook with independent
+rollback and invalidation. Confirmed target IDs are frozen; new successors are
+outside the batch. Tag edits use the current task cache. Successes remain saved;
+named failures can be reviewed and retried independently without replaying
+successful completions. Selection and actions are locked while applying. Tasks
+no longer available in the current view are excluded from new edits. No endpoint,
+schema, dependency, AI context, score formula, or external-calendar ownership
+contract changes.
 
 #### Partial-update validation (features/REV-01)
 
@@ -844,6 +972,17 @@ UTC day boundaries. Portable export v1 adds nullable `tasks.deadline_date` as an
 additive field and preserves legacy timed values; consumers should ignore unknown
 fields. SQLite backups/restores preserve both storage forms.
 
+#### Frontend domain hooks (REV-11)
+
+`frontend/src/hooks/api.ts` preserves the public hook imports while dedicated
+modules own tasks/lists/time blocks (`tasks.ts`), journal/scores/insights
+(`journal.ts`), AI settings and streaming (`ai.ts`), and calendar imports
+(`calendar-imports.ts`). Calendar inbound and webhooks retain their existing
+modules. Shared query keys live in `query-keys.ts`; telemetry invalidation lives
+in `invalidation.ts`. Domain modules import these shared primitives directly
+instead of importing the compatibility facade. Task hooks retain the single
+`tasksKey` object and the existing per-QueryClient mutation coordinator.
+
 #### Task cache concurrency and telemetry refresh (QA-03)
 
 All task views share the `['tasks']` query. `frontend/src/hooks/task-cache.ts`
@@ -1047,7 +1186,8 @@ telemetry. Payloads capture destination and file at submission; the pending
 mutation covers file reading and API persistence and survives view departure.
 Completion refreshes inventory caches even after navigation; view-local notices
 are shown only when the initiating view remains mounted. The standalone overlay
-below reads this inventory without expanding recurrence.
+below reads this inventory and expands supported series only for an explicit
+bounded display window (REV-17).
 
 See [calendar import usage and API](docs/calendar-import.md).
 
@@ -1083,21 +1223,63 @@ placement uses browser-local half-open day boundaries, so DST-length days and
 cross-midnight events retain their correct overlap. Points appear on their
 start day; events ending at midnight do not occupy the next day.
 
-Recurring masters/exceptions (including a master sharing a UID with an exception),
-cancellations, DURATION-based events, unknown zones, ambiguous/nonexistent named
-local times and invalid/incomparable intervals are listed outside the grid with
-explicit reasons. No occurrence expansion, guessed duration, alarm execution or
-URL fetch occurs. Original imports remain unchanged. Descriptions, attendees,
+Without a display window, recurring masters/exceptions and cancellations remain
+outside the grid. Windowed recurrence follows REV-17 below. DURATION-based events,
+unknown zones, ambiguous/nonexistent named local times and invalid/incomparable
+intervals are listed outside the grid with explicit reasons. No guessed duration,
+alarm execution or URL fetch occurs. Original imports remain unchanged. Descriptions, attendees,
 attachments and raw snapshots are omitted from the projection response. Empty,
 loading and retryable error states are explicit; failed queries hide stale
 appointments. Selection changes never display the previous source's response.
 
 The overlay lives only in the independent `['calendar-imports']` query family;
 reimport/removal invalidates it without task/telemetry invalidations. There is no
-new schema, persistent preference, dependency or remote fetch. Files are snapshots;
+new schema, persistent preference or remote fetch. Files are snapshots;
 updates require explicit reimport. URL subscriptions remain a separate future
 feature; live inbound reconciliation is SYNC-02 below.
 
+
+#### Bounded external recurring occurrence display (REV-17)
+
+Imported and live overlays share the read-only `app/external_recurrence.py`
+projection. Both endpoints accept optional paired ISO `start` and `end` dates:
+end is exclusive, the interval must be positive, and the maximum is 370 days.
+Absent dates preserve the older standalone/unplaced-recurrence contract. Calendar
+always supplies its actual visible days (including Month padding), padded by one
+calendar day at either end to cover browser-local versus UTC day boundaries.
+All six modes reuse the same occurrence projection. Source selection remains
+view-local; imported/live query keys include source and window independently of
+`['tasks']`. A new window never renders a previous window's response while loading.
+
+The engine supports DAILY/WEEKLY/MONTHLY/YEARLY rules with INTERVAL, COUNT, UNTIL,
+BYDAY (including ordinals), BYMONTHDAY, BYMONTH, WKST and BYSETPOS, plus RDATE and
+EXDATE. It resolves wall-clock recurrence in the supplying snapshot's timezone,
+with embedded VTIMEZONE precedence, and preserves floating clocks and exclusive
+all-day ends. Original recurrence identity, instead of the moved start, identifies
+an overridden occurrence; moved exceptions can enter or leave the visible range.
+Cancelled occurrences are omitted; a cancelled master suppresses its series.
+Occurrence IDs are deterministic within their source and use the original typed
+clock/timezone domain, so range changes do not rename matching occurrences.
+
+EXRULE, hourly/finer frequencies, period-valued RDATE and RANGE exceptions remain
+unsupported. Recurring DTSTART/DTEND pairs in differing clock domains/TZIDs and
+invalid rule combinations also remain unsupported instead of being coerced.
+Unsupported, over-limit or unsafe series produce explicit unplaced diagnostics
+instead of a partial misleading expansion. Search is bounded by both 20,000
+candidates and 20,000 calendar days from the original series seed to the requested
+end. An internal UNTIL horizon also prevents impossible/sparse rules searching
+beyond the requested end plus two days; original COUNT/UNTIL semantics remain.
+Very old or dense series may remain unplaced even for a short display window.
+`python-dateutil` is an explicit dependency using the already locked distribution.
+
+Projection does not mutate snapshots, imports, inbound resources, tasks, work
+blocks, scores or publication mappings. Imported reimport remains an
+omission-preserving identity merge. Live windowed projection reparses retained
+valid resource text, including a master with overrides, without changing the
+inbound inventory schema or its complete-collection deletion authority. Live
+refresh/removal changes the next projection; stale-cache/reconciliation messaging
+retains the existing contract. This grants no series-editing, task-recurrence,
+alarm, invitation or bidirectional authority.
 
 #### Capability-aware inbound reconciliation (SYNC-02)
 
@@ -1133,11 +1315,12 @@ links. SQLite backups/recovery preserve them; portable ZIP exports exclude them.
   members, with no duplicate/contradictory entries, query/dot aliases, DTDs or
   entities. Only REPORT's parsed DAV token precondition triggers token recovery;
   unrelated permission failures remain authentication errors.
-- **Unsupported resources**: multiple VEVENTs in one resource, including a
-  valid recurrence master with overrides, remain opaque/unplaced. Invalid
-  iCalendar also retains valid UTF-8 text as `component_state='unparsable'`.
-  Non-UTF-8 GET bodies fail the batch instead of silently replacing bytes.
-  There is no recurrence expansion or alarm execution.
+- **Retained resources**: multiple VEVENTs in one resource retain their original
+  text, including a valid recurrence master with overrides. Legacy unwindowed
+  projection leaves them opaque; REV-17 reparses valid retained resources for
+  bounded read-only occurrence display. Invalid iCalendar retains valid UTF-8
+  text as `component_state='unparsable'`. Non-UTF-8 GET bodies fail the batch
+  instead of silently replacing bytes. No alarm executes.
 - **Lifecycle**: the queue worker starts with the backend and runs every 30
   seconds, on manual **Sync now**, and via the app-resume endpoint
   `POST /api/calendar/connections/resume`. Existing startup/restore verification
@@ -1157,7 +1340,13 @@ links. SQLite backups/recovery preserve them; portable ZIP exports exclude them.
   label retained appointments stale; failed cache reads hide them and offer retry.
 
 Bidirectional edits and inbound write authority remain SYNC-03; `VTODO` task
-synchronization remains TASKDAV-01.
+synchronization remains TASKDAV-01. The REV-20 evaluation (2026-11-06) defers
+both, along with Evolution Data Server/Akonadi bridges: the user confirmed no
+current unmet workflow. Reconsider only after a demonstrated need, an approved
+ownership/concurrency/deletion/recurrence/echo/conflict design for proposed
+bidirectional writes, and current packaged native/credential acceptance.
+Read-only mirroring and explicit outbound VEVENT publication retain their
+existing authority; no bridge, mandatory account, server or cloud relay is added.
 
 
 #### Read-only subscription evaluation (ICS-03)
@@ -1169,8 +1358,9 @@ External URL polling and publishing a Journal feed are separate directions:
   separate source/polling state, credential-store protection for private URLs,
   conditional HTTP validation and atomic complete-snapshot replacement. This must
   not reuse file import's omission-preserving merge policy. Failed refreshes keep
-  the last good inventory. No inbound listener is needed. Recurrence stays opaque;
-  occurrence expansion remains deferred. Startup/resume and manual refresh operate
+  the last good inventory. No inbound listener is needed. A future subscription may reuse REV-17
+  for supported bounded occurrence display; unsupported source semantics remain
+  opaque. Startup/resume and manual refresh operate
   only while the application runs, with explicit stale/error status.
 - **Journal → calendar client**: defer publishing until stable addressing and
   per-feed revocable authorization exist. The packaged ephemeral backend address
@@ -1192,6 +1382,7 @@ complete-feed assumptions, recovery, credential handling and implementation gate
    - Clean typographical hierarchy with Notion-style slash commands (`/h1`, `/task`, `/quote`, `/callout`).
    - Saves use a 700 ms debounce with the day, markdown, mood, and energy frozen at schedule time. Undoing to the loaded text replaces queued content while preserving current ratings.
    - Loading stored markdown suppresses editor update events. The editor, ratings, and content-insertion buttons stay disabled until the selected day's entry resolves; the journal surface exposes its busy state. A settled initial-load failure clears busy state and shows an alert with query retry while editing stays locked. A 404 resolves as an empty day; failed background refetches do not lock already-loaded content or replace an unsaved draft. Visiting an empty day creates no entry; every day switch (including Today and search-result navigation), section exit, and editor unmount flushes queued changes to their original day.
+   - Journal saves optimistically cache editable content for both existing and first-time entries, including rating-only entries. A return during an in-flight save hydrates from that frozen document instead of a cached empty-day response. New optimistic documents omit server telemetry and timestamps until refetch supplies them; recorded metrics render only when present. Failed saves restore the previous cache value, including an explicitly absent entry. Background refetches still do not replace an already-loaded editor or unsaved typing.
    - Activity insertion belongs to the active editor lifecycle: changing days, leaving the journal, or unmounting invalidates pending results, even after returning to the same day. Same-day results append to the latest text rather than overwriting edits made during the request. Slash-extension callbacks dispatch through current handlers because ProseMirror retains the initially configured callbacks.
    - Slash command definitions live in `components/slash-command.tsx`; `components/journal/slash-menu.ts` owns popup DOM, active selection, geometry and cleanup. Pointer hover and arrow keys share selection; keyboard navigation preserves rows and reveals the active option. Click/tap or Enter invokes a command once while retaining editor focus. Escape exits suggestion state without changing journal text.
    - The fixed slash popup recalculates its anchor on captured ancestor scrolling, viewport changes and ancestor `ResizeObserver` notifications. It flips and constrains its dimensions to available viewport space; missing or clipped anchors hide it. Listbox/options and editor active-descendant attributes expose selection. Day/section transitions, unmount and suggestion exit remove the popup and its subscriptions.
@@ -1200,7 +1391,8 @@ complete-feed assumptions, recovery, credential handling and implementation gate
    - `components/journal/selection-toolbar.tsx` uses TipTap v3's BubbleMenu with a fixed body portal, clipping-aware virtual selection geometry, viewport flipping/shifting and event/observer-driven repositioning for scrolling, sidebar and content resizing. It hides on composition, empty selection, outside focus or Escape; a new selection clears Escape dismissal. Day/editor-context changes unregister the plugin and subscriptions. Full writing controls remain available independently of the popup.
    - Link forms capture the selected range and document identity before input focus. Apply/remove restores that range; document or selection changes invalidate the draft instead of applying to stale offsets. Addresses use the installed Link extension's URI validation. Links do not navigate when clicked in the editor. Composition locks formatting controls, leaving composing text intact.
    - `components/journal/extensions.ts` centralizes the Markdown-safe schema and serialization (`html: false`, `breaks: true`). Markdown remains authoritative for saves, search/AI context and exact-file export. Underline is explicitly disabled; highlight has no control or production mark. An HTML-only highlight serializes to plain text and fails the persistence gate. Supporting either mark requires a separately approved serialization/storage decision, rather than silently losing formatting. AI rewrites remain proposals whose supported formatting is preserved on acceptance; model fidelity itself is not guaranteed.
-   - Save feedback distinguishes queued unsaved changes from in-flight, failed and confirmed saves for the displayed day. These controls retain frozen debounced payloads, baseline/empty-day checks, rating overrides, activity lifecycle and stale-AI-preview protection.
+   - Save feedback distinguishes queued unsaved changes from in-flight, failed and confirmed local saves for the displayed day. Retry local save uses the current editor text and ratings. Ratings hydrate once with the day's document, so cache rollback/refetch cannot replace failed local edits. These controls retain frozen debounced payloads, baseline/empty-day checks, rating overrides, activity lifecycle and stale-AI-preview protection.
+
 2. **Automated Daily Activity Rollup Embeds**:
    - At the top or bottom of today's journal entry, a one-click button inserts live data:
      - **Tasks Completed Today**: `[x] Submit report`, `[x] Code review`.
@@ -1209,6 +1401,42 @@ complete-feed assumptions, recovery, credential handling and implementation gate
 3. **Daily Reflection Templates**:
    - Configurable prompts: "What was the main friction point today?", "What is one win to celebrate?", "What should be deprioritized tomorrow?"
 
+#### Independent progress receipts (REV-16)
+
+Local persistence, search indexing, AI review and calendar publication have separate
+presentation states; elapsed time never implies completion. Journal's closed-by-default
+Save and search details disclosure queries `GET /api/journal/{day}/status` only while
+open. The response includes entry existence, last persisted `updated_at`, and explicit
+keyword (`ready | missing | not_applicable`) and semantic
+(`ready | missing | unavailable | not_applicable`) states. Rating-only and absent days
+have no searchable text. One SQL statement checks current persisted Markdown against
+an exact single FTS row and, for semantic readiness, the transactional ready receipt
+and vector existence. Missing sqlite-vec is unavailable rather than a failed local save.
+
+`POST /api/journal/{day}/reindex` rebuilds only that saved document, or removes orphan
+index data for an absent/rating-only day. It acquires SQLite's writer lock before
+reading and holds it through receipt calculation/commit; concurrent saves cannot
+leave an older reindex behind. Embedding failure can leave keyword ready and semantic
+missing, with a retry action. Journal saves and capture invalidate document status;
+reindex invalidates search results and global search status. Unsaved editor changes
+are explicitly outside these persisted receipts. No new schema or durable job queue
+is introduced.
+
+Daily AI review distinguishes checking/unavailable, no saved review, in-progress,
+saved snapshot and failure. Partial streams are previews; an ended stream without
+`done` is a retryable failure. Existing saved reviews and journal content survive
+review failure. Journal day changes remount review progress to prevent another day's
+in-flight/error state appearing on the destination day.
+
+Calendar link presentation requires both action and revision acknowledgement before
+showing Remote change acknowledged; a `synced` state alone is insufficient. Deletion
+acknowledgement is distinct from intentional detachment. Settings retains queue,
+conflict/error counts, last acknowledged remote change and recovery controls. The
+compact Calendar sources summary describes the read-only mirror's confirmed check,
+active check, unknown or stale state and directs outbound publication inspection to
+Settings. Mirror freshness never implies outbound acknowledgement or automatic
+source selection. The existing polling/query and authority boundaries remain intact.
+
 ### 6.3 Feature Module 3: Proactive AI Agent Features
 1. **Hierarchical Summarization & Review Agent**:
    - Evaluates daily balance, detects habit degradation early, and produces actionable insights.
@@ -1216,13 +1444,18 @@ complete-feed assumptions, recovery, credential handling and implementation gate
    - User inputs: `Plan product launch`.
    - Agent outputs structured subtasks with estimated times and priority suggestions.
 3. **Conversational Daily Planning Briefing**:
-   - Every morning, agent reviews overdue tasks, today's calendar, and yesterday's reflection to recommend an achievable Top 3 Priority Focus.
+   - The on-demand briefing reads at most 20 overdue tasks, 30 due-today tasks, yesterday's feedback and the existing 1,500-character journal excerpt to recommend an achievable Top 3. Candidate objects include stable task IDs, titles, explicit deadline fields and status; open-task totals use a count query. No additional journal/calendar history is loaded.
+   - Responses retain `top_focus` strings and add aligned `recommendations: [{text, task_id}]`. An ID is executable only if supplied in the bounded candidate set and attached to the corresponding recommendation text. Unknown/misaligned IDs and legacy text-only output become general advice (`task_id: null`), without task-title matching. Partial streams use the same reference validation; frontend actions require a final `done` response. Failed or interrupted streams retain readable advice and expose retry without enabling actions.
+   - `components/recommendations/task-actions.tsx` resolves references from the canonical tasks cache, independently of the current scope/search. Open task reveals the existing TaskItem actions inline without changing navigation/filter state. Renames use the current title; missing tasks keep their recommendation with an unavailable explanation. Completed/canceled tasks remain inspectable but cannot be scheduled or focused from the recommendation.
+   - Schedule uses a dedicated inline form and `hooks/time-blocks.ts` to create a local all-day or timed work block. All-day ends are exclusive; local timed fields use the shared candidate calculation, reject clock gaps and require explicit earlier/later fold choices. Creation requires confirmation, leaves task deadlines unchanged, retains failed/hidden drafts for retry and refreshes the independent blocks cache. Existing different-task sessions and break phases must be finished or reset before Start focus can switch attribution. Expanded briefings scroll with task content.
+   - Saved daily review responses expose `suggested_action_for_tomorrow` from existing rubric JSON; missing/invalid historical values resolve to an empty string. Journal offers an editable task draft for a saved recommendation, with optional date-only deadline and explicit Create task confirmation through the canonical task hook. Generation/partial output never creates tasks. Same-day unchanged-recommendation drafts and created-state feedback survive review regeneration; day/recommendation changes reset them. Drafts are view-local, not durable records. Weekly/monthly narrative extraction is outside this implementation; no title matching, automatic scheduling or inference from prose is introduced.
 4. **Natural Language Omnibar & Conversational Capture**:
    - Dictate or paste unstructured text: *"Spoke with Alex. Need to email him the slide deck by Thursday 4pm and schedule team sync for Monday."*
    - Agent creates the journal note snippet and registers two tasks with explicit due dates.
 5. **Ask My Second Brain (Hybrid Search)**:
    - Ask questions like: *"When did I start feeling burned out on the backend refactor and what caused it?"*
    - Queries `sqlite-vec` embeddings and `fts_entries` to cite past journal entries and weekly rollups.
+   - `POST /api/agents/ask/stream` validates the submitted question against a 4,000-Unicode-code-point limit, including surrounding whitespace, before retrieval or model execution. Oversized input receives HTTP 422 with the field and maximum length; questions are never truncated. Accepted questions retain existing whitespace trimming and nonempty validation. Source and history context bounds are unchanged.
 
 #### Consistent database backups (DATA-02)
 
@@ -1367,7 +1600,10 @@ separate evidence.
 
 ### 6.4 Optional Local-First Calendar Interoperability
 
-Calendar interoperability is tracked in `todo.md`. ICS snapshots, backend
+Calendar interoperability is documented here and in the
+[calendar synchronization guide](docs/calendar-sync.md). The former root `todo.md`
+is absent; current local follow-ups live in the [feature backlog](features/todo.md).
+ICS snapshots, backend
 connection setup, conditional dispatch, and a durable background queue are
 implemented, including Settings setup, explicit block selection, and synchronization
 controls. Read-only file imports are also implemented. ICS-03 evaluates subscriptions;
@@ -1379,7 +1615,7 @@ distinguish current modules from their future integration contracts.
 - **Optional CalDAV connection API**: Connect to a user-managed server using supported password/app-password authentication through the backend API. Settings provides setup, explicit per-block opt-in, pause/enablement, and manual synchronization. Radicale may run as a user-level service, installed and managed by the user; Journal does not bundle, install, start, or manage it. Verify server interoperability separately, including Nextcloud and Baïkal. OAuth-only server configurations are outside scope.
 - **Sync availability**: Journal synchronizes only while running. A localhost server serves clients on the same machine; other devices need a reachable server. No public callback endpoint is required.
 - **Domain separation**: Calendar events and task-linked time blocks remain distinct from task deadlines, completion, and scoring. CalDAV `VTODO` task synchronization is a separate optional feature.
-- **Module boundary**: Keep ICS serialization self-contained and independent of CalDAV. Any future CalDAV adapter, synchronization service, worker, and connection routes live in separate modules. Local changes commit independently of the server; persist resource links, UIDs, ETags, and queued work. Use conditional writes and explicit conflict states; use optional sync tokens with an ETag-based reconciliation fallback.
+- **Module boundary**: Keep ICS serialization self-contained and independent of CalDAV. The implemented CalDAV adapter, synchronization service, worker, and connection routes live in separate modules. Local changes commit independently of the server; persist resource links, UIDs, ETags, and queued work. Use conditional writes and explicit conflict states; use optional sync tokens with an ETag-based reconciliation fallback.
 - **Connection credentials (CAL-03)**: Server credentials use a dedicated OS credential-store interface, outside ordinary settings and data exports. Linux desktop calendar bridges remain optional extensions. Outgoing automation has its own opt-in configuration and delivery ledger, independent of calendar synchronization.
 
 #### Optional outgoing automation (HOOK-01 through HOOK-04)
@@ -1880,126 +2116,48 @@ edited during the request, while a newer key draft is retained. Preference saves
 likewise release their draft only when there is no newer edit. API keys are never
 prefilled, and a blank key input leaves the stored key unchanged on save.
 
-```python
-from typing import Optional
-from pydantic_settings import BaseSettings
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.providers.openai import OpenAIProvider
+### 7.2 Review runners and deterministic scoring
 
-class AISettings(BaseSettings):
-    AI_PROVIDER: str = "openai_compatible"  # "openai_compatible" or "anthropic"
-    AI_MODEL_NAME: str = "llama3.2:3b"     # e.g., "llama3.2:3b", "gpt-4o-mini", "claude-3-5-sonnet-latest"
-    AI_BASE_URL: Optional[str] = "http://localhost:11434/v1"  # Custom endpoint (Ollama, OpenRouter, Groq, vLLM)
-    AI_API_KEY: Optional[str] = "ollama"   # API key (sk-... or dummy string for local Ollama)
+The executable implementation lives in source instead of duplicated example agents:
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+| Responsibility | Implementation |
+|---|---|
+| Model construction, settings overrides, retry wrapper and readable errors | `backend/app/ai_factory.py` |
+| Output schemas, prompt defaults, bounded prompt rendering and runners | `backend/app/agents.py` |
+| Target-period context, configured request models, review persistence and stream lifecycle | `backend/app/ai_orchestration.py` |
+| HTTP routes and request validation | `backend/app/routers/agents.py` |
+| Usage recording | `backend/app/ai_usage.py` |
+| Deterministic metrics, score and effective target | `backend/app/telemetry.py`, `backend/app/scoring.py`, `backend/app/score_service.py` |
+| Scheduled catch-up and durable job ownership | `backend/app/review_scheduler.py` |
 
-def create_agent_model(settings: Optional[AISettings] = None):
-    """Instantiates a model client with configurable base_url and api_key."""
-    s = settings or AISettings()
+Agents use PydanticAI's `output_type=` and read `result.output`. Review runners
+accept `system_prompt=` and `on_usage=` overrides. The daily runner clips today's
+text to 4,000 characters and each of six earlier excerpts to 500 characters;
+period-specific context selection remains in the orchestration module. HTTP
+adapters and scheduled catch-up call the same review workflows; daily streaming
+and non-streaming paths share preparation and snapshot persistence. Briefing
+paths share their data projection and final payload construction. The shared
+`DailyScoreResponse` schema lives in `app/schemas.py`. The model supplies
+narrative and a bounded nudge instead of computing scores or trends. Streaming
+uses the shared SSE protocol described in §6.3.
 
-    if s.AI_PROVIDER == "anthropic":
-        return AnthropicModel(
-            model_name=s.AI_MODEL_NAME,
-            api_key=s.AI_API_KEY,
-            base_url=s.AI_BASE_URL  # Supports Anthropic reverse proxies if provided
-        )
-    else:
-        # Generic OpenAI-compatible provider: works with Ollama, OpenRouter, Groq, DeepSeek, LocalAI
-        return OpenAIModel(
-            model_name=s.AI_MODEL_NAME,
-            provider=OpenAIProvider(
-                base_url=s.AI_BASE_URL or "https://api.openai.com/v1",
-                api_key=s.AI_API_KEY or "not-needed"
-            )
-        )
-```
+### 7.3 Task decomposition and fast-tier features
 
-### 7.2 Daily Review & Scoring Agent Example
-
-```python
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
-from typing import List, Optional
-from dataclasses import dataclass
-import datetime
-
-# 1. Output Schemas
-class RubricBreakdown(BaseModel):
-    task_completion_rate: float = Field(description="Tasks completed / planned (0.0 to 1.0)")
-    deep_work_hours: float = Field(description="Actual deep work hours logged")
-    habit_consistency: float = Field(description="Habits completed / scheduled (0.0 to 1.0)")
-
-class DailyReviewOutput(BaseModel):
-    llm_nudge: float = Field(description="Score modifier from -10.0 to +10.0 based on subjective context", ge=-10.0, le=10.0)
-    nudge_rationale: str = Field(description="Explanation for the score adjustment")
-    feedback: str = Field(description="Direct, constructive feedback on the day's execution")
-    key_insight: str = Field(description="One high-leverage observation or behavioral pattern identified")
-    suggested_action_for_tomorrow: str = Field(description="Single most important recommendation for next day")
-
-# 2. Agent Dependencies
-@dataclass
-class AgentDeps:
-    today_raw_text: str
-    past_6d_entries: List[dict]
-    latest_weekly_summary: Optional[str]
-    latest_monthly_summary: Optional[str]
-    deterministic_metrics: dict
-
-# 3. Agent Definition using dynamic model factory
-model = create_agent_model()
-daily_agent = Agent(
-    model,
-    deps_type=AgentDeps,
-    result_type=DailyReviewOutput,
-    system_prompt=(
-        "You are an executive personal coach and productivity analyst. "
-        "You analyze daily journal entries, task telemetry, and recent historical summaries. "
-        "Your role is not to flatter, but to provide rigorous, actionable, empathetic analysis. "
-        "You will receive computed deterministic metrics (task rate, focus hours). "
-        "You may adjust the score with an LLM nudge between -10 and +10 with an explicit reason."
-    )
-)
-
-@daily_agent.system_prompt
-def build_context(ctx: RunContext[AgentDeps]) -> str:
-    return f"""
-    --- CONTEXT (BOUNDED MEMORY) ---
-    Monthly Context: {ctx.deps.latest_monthly_summary or 'No prior month recorded.'}
-    Weekly Context: {ctx.deps.latest_weekly_summary or 'No prior week recorded.'}
-    Past 6 Days Scores & Notes: {ctx.deps.past_6d_entries}
-    Deterministic Metrics Today: {ctx.deps.deterministic_metrics}
-
-    Today's Raw Entry:
-    \"\"\"{ctx.deps.today_raw_text}\"\"\"
-    """
-```
-
-### 7.3 Task Decomposition Tool Example
-
-```python
-class SubtaskItem(BaseModel):
-    title: str
-    estimated_minutes: int
-    priority: int = Field(ge=0, le=3)
-
-class DecompositionPlan(BaseModel):
-    task_breakdown: List[SubtaskItem]
-    advice: str
-
-breakdown_agent = Agent(
-    'anthropic:claude-3-5-haiku-latest',
-    result_type=DecompositionPlan,
-    system_prompt="Decompose complex user goals into atomic, actionable steps (20-45 minutes each)."
-)
-```
+`run_task_decomposition` uses the configured main model and returns validated
+subtask drafts. Capture, briefing, Q&A, and editor assists use the fast model tier,
+falling back to the configured main tier. Callers MUST load settings and prompt
+overrides before building request models. Calling `create_agent_model()` without
+settings reads environment defaults only and bypasses the user's saved provider.
+See §6.3 for endpoint and context contracts.
 
 ---
 
-## 8. Implementation Roadmap
+## 8. Historical implementation roadmap
+
+These completed phases preserve original delivery intent and branch names. Their
+day estimates and feature descriptions are historical, not current acceptance
+evidence. Use §§2–7 for implemented contracts and the local
+[feature backlog](features/todo.md#review-follow-up-backlog) for remaining work.
 
 ### Phase 1: Foundation & Data Layer (Days 1–3) — `feat/backend-data-layer` ✅ (implemented on branch `feat/backend-data-layer`)
 - [x] Initialize Git repo, `.gitignore`, and Python virtual environment with `uv`.
@@ -2040,46 +2198,40 @@ breakdown_agent = Agent(
 
 ---
 
-## 9. Recommended Development Commands & Dependencies
+## 9. Development commands and dependencies
 
-### Backend (`requirements.txt` / `pyproject.toml`)
-```toml
-[project]
-dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.30.0",
-    "sqlmodel>=0.0.22",
-    "pydantic>=2.9.0",
-    "pydantic-ai>=0.0.14",
-    "sqlite-vec>=0.1.1",
-    "litellm>=1.49.0",
-    "fastembed>=0.3.0",
-    "python-multipart>=0.0.9"
-]
+Run each block from the repository root. `backend/pyproject.toml` and
+`frontend/package.json` declare dependencies; `backend/uv.lock` and
+`frontend/package-lock.json` resolve versions. Do not install from historical
+example manifests. `./setup.sh` and `./dev.sh` provide the combined development
+workflow described in [Quick start](README.md#quick-start-dev).
+
+```bash
+# Backend, Python 3.12+
+(cd backend && uv sync --locked)
+(cd backend && uv run pytest)
+(cd backend && uv run uvicorn app.main:app --reload)
 ```
 
-### Frontend (`package.json`)
-```json
-{
-  "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "@tanstack/react-query": "^5.59.0",
-    "zustand": "^5.0.0",
-    "@tiptap/react": "^2.8.0",
-    "@tiptap/starter-kit": "^2.8.0",
-    "@tiptap/extension-task-list": "^2.8.0",
-    "@tiptap/extension-task-item": "^2.8.0",
-    "@dnd-kit/core": "^6.1.0",
-    "@dnd-kit/sortable": "^8.0.0",
-    "chrono-node": "^2.7.5",
-    "lucide-react": "^0.453.0",
-    "framer-motion": "^11.11.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.5.4"
-  }
-}
+```bash
+# Frontend, Node ^20.19.0 or >=22.12.0
+(cd frontend && npm ci)
+(cd frontend && npm run test)
+(cd frontend && npm run build)
+(cd frontend && npm run lint)
+(cd frontend && node --test scripts/test-timezones.node-test.mjs)
+(cd frontend && npm run test:timezones)
+(cd frontend && npm run dev)
 ```
+
+Run servers in separate terminals. Ordinary endpoint tests use in-memory SQLite;
+file-backed migration, backup, restore, locking, and WAL tests use disposable
+fixtures. AI/embedding calls are stubbed. Optional local Radicale integration
+requires the separate `calendar-test` group; see §6.4 and the
+[developer verification guide](docs/calendar-sync.md#developer-verification).
+Desktop builds additionally require Rust, system libraries, and a frozen backend;
+see [desktop setup](README.md#desktop-app-tauri-v2). Test counts belong in dated
+verification reports instead of command comments.
 
 ---
 
@@ -2089,12 +2241,12 @@ To ensure clean development, isolation of complex AI/frontend features, and easy
 
 ### 10.1 Branch Structure
 
-* **`main`**: The single source of truth. Always deployable and buildable. Direct commits to `main` are prohibited except for initial project bootstrap and docs.
+* **`main`**: The single source of truth. Always deployable and buildable. Direct commits to `main` are allowed for docs and one-line fixes only.
 * **`feat/<feature-name>`**: Dedicated branch for every feature or architectural phase.
   * `feat/backend-data-layer`: FastAPI models, SQLite schema, CRUD routes.
   * `feat/task-engine-ui`: Quick-add bar, task list, Kanban views, optimistic UI.
   * `feat/focus-tiptap-journal`: TipTap block editor, daily activity embeds, focus clock.
-  * `feat/ai-compaction-agents`: Daily, weekly, monthly PydanticAI rollups & systemd timers.
+  * `feat/ai-compaction-agents`: Daily, weekly, monthly PydanticAI rollups (historical branch; scheduling now uses the backend lifecycle worker).
   * `feat/ai-provider-config`: UI & API settings for custom `base_url` and `api_key`.
   * `feat/rag-desktop-polish`: sqlite-vec search, Tauri v2 desktop integration.
 * **`fix/<bug-name>`**: Targeted fixes for unexpected behavior or edge-case regressions.
@@ -2102,7 +2254,10 @@ To ensure clean development, isolation of complex AI/frontend features, and easy
 
 ### 10.2 Feature Branch Lifecycle Workflow
 
-For every new feature, follow this standard cycle:
+For every new feature, follow this standard cycle from the repository root.
+Preserve unrelated worktree changes; stage only intended files. Obtain an
+independent subagent review and resolve blockers before merging a non-trivial
+branch. Review and applicable verification precede the final commit and merge.
 
 ```bash
 # 1. Ensure main is clean and up to date
@@ -2112,13 +2267,17 @@ git pull origin main
 # 2. Branch off into an isolated feature branch
 git checkout -b feat/task-engine-ui
 
-# 3. Work incrementally with atomic, descriptive Conventional Commits
+# 3. Verify the intended changes before committing
+(cd backend && uv run pytest)
+(cd frontend && npm run test)
+(cd frontend && npm run build)
+(cd frontend && npm run lint)
+(cd frontend && npm run test:timezones)
+
+# 4. Stage intended files and commit after independent review
+# Replace <files> with explicit paths; preserve unrelated changes
 git add <files>
 git commit -m "feat(tasks): add chrono-node inline NLP parsing to quick-add bar"
-
-# 4. Run tests and linting before merge
-pytest tests/
-npm run lint
 
 # 5. Merge feature back into main (using --no-ff or PR to preserve history)
 git checkout main
@@ -2132,13 +2291,38 @@ git branch -d feat/task-engine-ui
 
 Branch pushes and pull requests run `.github/workflows/ci.yml` independently of
 release tags. Its required-check candidates are `Backend tests`, `Frontend test`,
-`Frontend build`, and `Frontend lint`. Backend checks use Python 3.12 and the uv
-lockfile; frontend checks use Node 24 and `npm ci`. The frontend matrix runs all
-three checks even if one fails. Tests retain isolated SQLite fixtures and stubbed
-AI/embedding calls; CI disables scheduled reviews and Hugging Face downloads.
-A repository administrator must require these four checks in the target branch's
+`Frontend build`, `Frontend lint`, and `Frontend timezones`. Backend checks use
+Python 3.12 and the uv lockfile; frontend checks use Node 24 and `npm ci`. The
+frontend test/build/lint matrix runs all three checks even if one fails. The
+independent timezone job runs the existing seven-zone `npm run test:timezones`
+script, retaining the six baseline zones plus Australia/Lord_Howe's half-hour
+DST coverage. Calendar range, projection, time-grid, time-edit, Year and mode
+integration suites are included. Node runner tests verify all zones are invoked
+and failures, signal termination and process-start errors produce failed checks.
+Tests retain isolated SQLite fixtures and stubbed AI/embedding calls; CI disables
+scheduled reviews and Hugging Face downloads.
+A repository administrator must require these five checks in the target branch's
 ruleset or branch protection to enforce merge blocking. The release workflow
-calls this workflow through `workflow_call` and waits for all four checks.
+calls this workflow through `workflow_call` and waits for all five checks.
+
+### 10.2.2 Cross-feature contract coverage
+
+Dedicated `cross-feature-contracts.test.tsx` and
+`test_cross_feature_contracts.py` suites connect existing feature boundaries.
+The frontend suite uses real Sidebar/Header navigation and the canonical task
+cache across List, Board, Calendar and Matrix. It retains Board's scoped Done
+policy and Matrix's independent All scope with shared search. Pending completion
+failure is checked before refetch resolves, followed by retry and cross-view
+placement checks. This extends QA-01's combined flow at the component/API level;
+it does not replace browser or packaged-desktop acceptance.
+
+Backend endpoint compositions check chart windows against lifetime streaks,
+recurring completion against journal/activity/score telemetry, historical review
+reruns after newer rollups, and local journal/FTS atomicity during indexing
+failure and recovery. Clocks are fixed; AI and embeddings are stubbed; databases
+are isolated. Local save and recovered indexing do not imply remote sync
+acknowledgement. The frontend contract suite is included in the seven-zone
+timezone runner, enforced by the independent `Frontend timezones` CI/release check.
 
 ### 10.3 Commit Message Convention (Conventional Commits)
 
@@ -2206,14 +2390,18 @@ the vendored sysroot in `.tauri-sysroot/` stays a no-root fallback for dev only:
 2. Commit, then tag: `git tag app-v0.1.1 && git push origin app-v0.1.1`. The workflow
    fails early if the tag doesn't match the config version.
 3. The release workflow first calls the branch CI workflow and requires backend
-   tests plus frontend tests, build, and lint to pass. The bundle job then builds
-   inside an **`ubuntu:22.04` container** on the current runner
+   tests plus frontend tests, build, lint, and timezone regressions to pass. The
+   bundle job then builds inside an **`ubuntu:22.04` container** on the current runner
    (the 22.04 runner label retired Sept 2026): glibc floor stays at 2.35 and
    old binutils avoids the `.relr.dyn`/old-strip breakage. Python 3.12, pinned uv,
    and the locked `packaging` dependency group build the PyInstaller sidecar.
    Before Tauri runs, `backend/scripts/smoke_sidecar.py` launches that exact
    executable on an OS-assigned loopback port. Health and linked list/task CRUD
-   must pass against an isolated temporary database. The harness isolates its
+   must pass against an isolated temporary database. The smoke check also downloads
+   a backup containing linked sentinel records, stops the server, and invokes the
+   same frozen executable's offline restore into a separate disposable database;
+   integrity, foreign keys, and restored relationship/content checks must pass.
+   The harness isolates its
    working directory and home/cache paths, disables scheduling and model
    downloads, and cleans up the process and temporary files on success or
    failure. Journal writes are excluded because indexing may initialize an
@@ -2269,9 +2457,13 @@ sidecar (fast startup; onefile would re-extract ~300 MB every launch):
   `VITE_API_URL` / `127.0.0.1:8000` (the `./dev.sh` backend).
 - **PyInstaller traps**: `httpx` is a RUNTIME dep (pydantic-ai model calls) —
   never exclude it; `sqlalchemy.dialects.sqlite.aiosqlite` resolves via
-  entry point so it needs an explicit hiddenimport; `sqlite_vec`'s `vec0.so`
-  ships as package data (`collect_data_files`); onnxruntime needs
-  `collect_dynamic_libs`.
+  entry point so it needs an explicit hiddenimport; `sqlite_vec`'s loadable
+  extension (`vec0.so` / `vec0.dylib` / `vec0.dll`) needs explicit
+  `collect_dynamic_libs` search patterns. Default Unix patterns require a `lib`
+  prefix and omit `vec0.so`; `collect_data_files` also excludes shared libraries.
+  Missing sqlite-vec can leave startup in keyword-only mode while offline restore
+  fails, so frozen acceptance must exercise recovery, not only health/CRUD.
+  onnxruntime also needs `collect_dynamic_libs`.
 - **Frozen-runtime traps** (both crashed the packaged app on real machines):
   pydantic plugins (logfire, via pydantic-ai) call `inspect.getsource()` —
   impossible in frozen apps, so `sidecar_main.py` sets

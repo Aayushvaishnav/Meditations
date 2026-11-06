@@ -20,6 +20,8 @@ import type { Editor } from "@tiptap/core"
 import { journalExtensions, getJournalMarkdown as getMarkdown } from "./journal/extensions"
 import { FormattingToolbar } from "./journal/formatting-toolbar"
 import { SelectionToolbar } from "./journal/selection-toolbar"
+import { JournalProgress } from "./journal/journal-progress"
+import { localSaveProgress, type LocalSaveState } from "@/lib/progress-state"
 
 function toDayParam(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0")
@@ -207,12 +209,6 @@ export function JournalView() {
     }
   }, [day, section, flushSave])
 
-  // pull day switch + rating changes into the next save
-  useEffect(() => {
-    setMood(entry.data?.mood ?? null)
-    setEnergy(entry.data?.energy ?? null)
-  }, [day, entry.data])
-
   // arriving from Second Brain: flush pending save to its own day, then jump
   useEffect(() => {
     if (!journalDay) return
@@ -231,6 +227,8 @@ export function JournalView() {
     setAssistView(null)
     assist.clear()
     const md = entry.data?.raw_markdown ?? ""
+    setMood(entry.data?.mood ?? null)
+    setEnergy(entry.data?.energy ?? null)
     editor.commands.setContent(md, { emitUpdate: false })
     baselineMdRef.current = getMarkdown(editor)
     setLoadedDay(day)
@@ -325,6 +323,14 @@ export function JournalView() {
   )
   const isToday = day === toDayParam(new Date())
 
+  const localState: LocalSaveState = saveFeedback === "queued" ? "queued"
+    : save.variables?.day !== day ? "unchanged"
+    : save.isPending ? "saving"
+    : save.isError ? "failed"
+    : save.data?.saved === true ? "saved"
+    : save.isSuccess && save.data?.saved === false ? "removed" : "unchanged"
+  const localProgress = localSaveProgress(localState)
+
   if (section !== "journal") return null
 
   return (
@@ -364,18 +370,15 @@ export function JournalView() {
             Today
           </Button>
         )}
-        <div role="status" aria-live="polite" className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
-          {saveFeedback === "queued" ? (
-            "Unsaved changes"
-          ) : save.variables?.day !== day ? null : save.isPending ? (
-            "Saving…"
-          ) : save.isError ? (
-            <span className="text-destructive">Save failed</span>
-          ) : save.data?.saved === true ? (
-            <span className="flex items-center gap-1">
-              <Check className="size-3 text-positive" /> Saved
-            </span>
-          ) : null}
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span role="status" aria-live="polite" title={localProgress.detail} className={localState === "failed" ? "text-destructive" : undefined}>
+            {localState !== "unchanged" && localProgress.label}
+          </span>
+          {localState === "failed" && <Button variant="outline" size="xs" disabled={!ready} onClick={() => {
+            if (!editor) return
+            scheduleSave(editor, true)
+            flushSave()
+          }}>Retry local save</Button>}
         </div>
       </div>
 
@@ -436,7 +439,7 @@ export function JournalView() {
             <Button variant="outline" size="xs" disabled={!ready} onClick={insertTemplate}>
               <Sparkles /> Reflection template
             </Button>
-            {entry.data && (
+            {entry.data?.tasks_done !== undefined && entry.data.tasks_planned !== undefined && entry.data.hours_deep_work !== undefined && (
               <span className="ml-auto text-muted-foreground">
                 {entry.data.tasks_done}/{entry.data.tasks_planned || "–"} tasks ·{" "}
                 {formatDuration(Math.round(entry.data.hours_deep_work * 60))} focus
@@ -489,7 +492,8 @@ export function JournalView() {
             </div>
           )}
 
-          <DailyReviewCard day={day} />
+          <JournalProgress key={`progress:${day}`} day={day} unsaved={localState === "queued" || localState === "saving" || localState === "failed"} />
+          <DailyReviewCard key={day} day={day} />
 
         </aside>
       </div>

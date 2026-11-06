@@ -4,6 +4,7 @@ import type { CalendarConnection, CalendarLinkView, TimeBlock } from "@/api/type
 import { useCalendarAllLinks, useCalendarControl, useCalendarLinks, useCalendarStatus, useTasks, useTimeBlocks } from "@/hooks/api"
 import { Button } from "@/components/ui/button"
 import { blockStartDay, blockTimeLabel } from "@/lib/time-blocks"
+import { calendarLinkLabel, calendarSelectionLabel } from "@/lib/calendar-progress"
 import { parseUTC } from "@/lib/date-values"
 
 const selectStyle = "mt-1 min-h-11 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm"
@@ -13,20 +14,6 @@ function blockDescription(block: TimeBlock, title: string) {
     ? `${block.start_date} to ${block.end_date} (exclusive), all day`
     : `${blockStartDay(block)} · ${blockTimeLabel(block)} (local time; source zone ${block.timezone})`
   return `${title} · ${interval}`
-}
-
-function removalAcknowledged(link: CalendarLinkView) {
-  return link.desired_action === "delete" && link.acknowledged_action === "delete"
-    && link.local_revision === link.acknowledged_revision
-}
-
-function selectionState(link: CalendarLinkView | undefined, connectionId: string) {
-  if (!link) return "Not published"
-  if (link.connection_id !== connectionId) return "Linked to another calendar"
-  if (link.selection_state === "detached") return "Detached; cannot republish"
-  if (removalAcknowledged(link)) return "Remote removal complete; select to publish again"
-  if (link.desired_action === "delete") return "Removal queued; select to publish again"
-  return link.state
 }
 
 function CalendarLinkRow({ link, description, locked, run }: {
@@ -40,9 +27,7 @@ function CalendarLinkRow({ link, description, locked, run }: {
       <div className="min-w-0 flex-1">
         <p className="break-words">{description}</p>
         <p className="text-muted-foreground">
-          {link.selection_state === "detached" ? "Detached; further sync stopped"
-            : removalAcknowledged(link) ? "Remote removal complete"
-              : `${link.state}${link.desired_action === "delete" ? " · removal queued" : ""}`}
+          {calendarLinkLabel(link)}
         </p>
         {link.state === "conflict" && <p className="text-muted-foreground">Stop syncing to keep both copies without overwriting remote changes.</p>}
         {link.last_error && <p className="text-destructive break-words">{link.last_error}</p>}
@@ -83,7 +68,7 @@ export function CalendarConnectionControls({ connection, setupBusy }: { connecti
     <div role="status" className="text-sm text-muted-foreground space-y-1">
       <p>{current.state === "authentication_required" ? "Authentication required. Replace credentials or verify to retry." : current.state === "connected" ? "Connection verified" : "Not verified. Verify after restarting Journal."} · {current.enabled ? "Sync enabled" : "Sync paused"}</p>
       {current.credential_state === "removal_pending" && <p>Credential removal incomplete. Retry Disconnect.</p>}
-      {status.data && <><p>{status.data.queued_count} queued · {status.data.conflict_count} conflicts · {status.data.error_count} errors</p><p>Last successful sync: {status.data.last_success_state === "never" ? "No events synced yet" : status.data.last_success_at ? parseUTC(status.data.last_success_at)?.toLocaleString() : "Earlier sync time unavailable"}</p></>}
+      {status.data && <><p>Outbound: {status.data.queued_count} queued · {status.data.conflict_count} conflicts · {status.data.error_count} errors</p><p>Last acknowledged remote change: {status.data.last_success_state === "never" ? "No events synced yet" : status.data.last_success_at ? parseUTC(status.data.last_success_at)?.toLocaleString() : "Earlier sync time unavailable"}</p></>}
     </div>
     <div className="flex flex-wrap gap-2">
       <Button className="min-h-11" variant="outline" disabled={locked || current.credential_state !== "present"} onClick={() => run("/verify")}>Verify connection</Button>
@@ -99,7 +84,7 @@ export function CalendarConnectionControls({ connection, setupBusy }: { connecti
           const link = allLinks.data?.find(item => item.local_block_id === block.id)
           const blocked = !!link && (link.connection_id !== connection.id || link.selection_state === "detached" || link.state === "conflict" || link.desired_action !== "delete")
           return <option key={block.id} value={block.id} disabled={blocked}>
-            {describe(block)} · {selectionState(link, connection.id)}
+            {describe(block)} · {calendarSelectionLabel(link, connection.id)}
           </option>
         })}
       </select>

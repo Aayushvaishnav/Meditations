@@ -11,7 +11,7 @@ const lazyModules = vi.hoisted(() => {
     const promise = new Promise<void>((done) => { resolve = done })
     return { promise, resolve, requested: vi.fn() }
   }
-  return { journal: gate(), insights: gate(), second_brain: gate(), settings: gate() }
+  return { matrix: gate(), journal: gate(), insights: gate(), second_brain: gate(), settings: gate() }
 })
 const mounts = vi.hoisted(() => ({ sidebar: 0, timer: 0, palette: 0 }))
 
@@ -36,6 +36,11 @@ vi.mock("@/hooks/api", () => ({
   useLists: () => ({ data: [] }),
   useResumeCalendarReconciliation: () => {},
 }))
+vi.mock("@/components/matrix-section", async () => {
+  lazyModules.matrix.requested()
+  await lazyModules.matrix.promise
+  return { MatrixSection: () => <main><h1>Matrix content</h1></main> }
+})
 vi.mock("@/components/journal-editor", async () => {
   lazyModules.journal.requested()
   await lazyModules.journal.promise
@@ -91,6 +96,17 @@ it("loads sections on demand while preserving the shell and current navigation",
     for (const name of Object.keys(mounts)) expect(screen.getByRole("button", { name: `${name}: 1` })).toBeTruthy()
     expect(mounts).toEqual(initialMounts)
   }
+
+  navigate("matrix")
+  expectLoading("Eisenhower Matrix")
+  expectShellPreserved()
+  navigate("tasks")
+  await resolveSection("matrix")
+  expect(screen.queryByRole("heading", { name: "Matrix content" })).toBeNull()
+  navigate("matrix")
+  expect(screen.getByRole("heading", { name: "Matrix content" })).toBeTruthy()
+  expect(lazyModules.matrix.requested).toHaveBeenCalledTimes(1)
+  expectShellPreserved()
 
   navigate("journal")
   expectLoading("journal")

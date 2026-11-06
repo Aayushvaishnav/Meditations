@@ -71,3 +71,15 @@ it("reports stale selected live data outside the closed controls without unmount
   expect(screen.getByRole("button", { name: /Dentist/ })).toBeDefined()
   expect(screen.queryByRole("combobox", { name: "Live calendar" })).toBeNull()
 })
+
+it("reports confirmed mirror checks in the compact sources summary", () => {
+  overlays.set("c1", { connection_id: "c1", reconciliation: { state: "current", capability: "listing", last_synced_at: "2020-01-01T00:00:00", last_error: null }, items: [], unplaced: [] })
+  render(<CalendarLiveOverlay inlineControls={false}>{(_items, _count, _controls, summary) => <p>{summary}</p>}</CalendarLiveOverlay>)
+  // Selection remains explicit; hidden sources do not claim a current mirror
+  expect(screen.getByText("Live hidden")).toBeTruthy()
+  cleanup()
+  render(<CalendarLiveOverlay>{(_items, _count, _controls, summary) => <p>{summary}</p>}</CalendarLiveOverlay>)
+  fireEvent.change(screen.getByLabelText("Live calendar"), { target: { value: "c1" } })
+  expect(screen.getByText(/Live:.*Mirror current as of last confirmed check/)).toBeTruthy()
+  expect(screen.getByText(/Last successful check:/)).toBeTruthy()
+})

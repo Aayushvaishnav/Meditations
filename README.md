@@ -21,7 +21,9 @@ optional AI against any OpenAI-compatible endpoint (defaults to a local Ollama).
   and `every mon, wed` recurrence (RRULE subset).
 - **Task views** — list sections (Overdue / Today / Tomorrow / Upcoming / No date /
   Completed), Kanban board with drag-and-drop, subtasks, inline rename, and
-  recurring-task clones on completion.
+  recurring-task clones on completion. Calendar includes Year, Month, Week,
+  Agenda, Multi-Day, and Multi-Week. The independent Matrix section uses explicit
+  importance and urgency instead of inferring them from priority or deadlines.
 - **Journal** — one markdown entry per day with mood/energy ratings, tipTap editor,
   and a hard rule that a day is never auto-created empty.
 - **Hybrid search** — SQLite FTS5 (keyword) + sqlite-vec (semantic embeddings via
@@ -29,7 +31,8 @@ optional AI against any OpenAI-compatible endpoint (defaults to a local Ollama).
 - **AI reviews** — daily / weekly / monthly compaction agents with strictly bounded
   context (the daily agent reads today + 6 past days + latest rollups; token cost
   is O(1) regardless of history), plus daily briefing, capture assists, and Q&A —
-  all streamed to the UI over SSE.
+  with SSE for daily review, briefing, Q&A, and editor assists. Weekly/monthly
+  reviews, capture, and decomposition use ordinary request responses.
 - **Daily score** — deterministic and never LLM-computed:
   `0.40*task + 0.35*focus + 0.15*habit + clamp(llm_nudge, ±10)`; unconfigured
   components are neutral, never punitive.
@@ -41,6 +44,16 @@ optional AI against any OpenAI-compatible endpoint (defaults to a local Ollama).
 
 ### Tasks — List View
 Natural-language capture, AI daily briefing ("Good morning — Top 3 for today"), priority flags, duration badges, and grouped sections (Overdue, Today, Upcoming).
+
+After a briefing finishes, linked recommendations offer **Open task**, **Schedule**
+and **Start focus**. Scheduling creates a local work block and leaves the task's
+deadline unchanged. If another focus session is in progress, finish or reset it
+before switching tasks. General advice remains readable without a task link.
+
+In Journal, a saved daily review's follow-up offers **Draft task**. Edit its title
+and optional deadline, then choose **Create task** to confirm. Failed saves keep
+the draft for retry; drafts stay within the current review view rather than being
+saved automatically.
 
 ![Tasks List View](Assets/list.png)
 
@@ -55,23 +68,76 @@ completed tasks. Use List to work with subtasks.
 
 ![Tasks Kanban Board](Assets/board.png)
 
+### Organize several tasks
+
+Choose **Select tasks** in List, Board, or Matrix, then select individual tasks or
+use **Select all visible**. Selection checkboxes are separate from completion;
+Tab and Space work with them. List reveals immediate subtasks so you can select
+them independently. Board selects only displayed top-level cards, including up
+to 30 matching Done cards. Changing the view, section, scope, or filter clears
+selection. If you navigate during a batch, unsent changes stop; an update already
+sent can still finish. Calendar remains outside bulk organization.
+
+Assign a list, change status, or add/remove a tag, then choose **Review changes**
+and confirm. Completing recurring tasks creates their successors using the usual
+recurrence rules; the confirmation explains this instead of offering an undo.
+Successful edits stay saved if another task fails. Review the named errors and
+choose **Retry failed only** to confirm another attempt without repeating the
+successful changes. Use **Done selecting** or Escape to leave selection mode.
+
 ### Tasks — Calendar View
-Month schedule view with drag-and-drop task rescheduling and focus clock integration.
+Choose Year, Month, Week, Agenda, Multi-Day, or Multi-Week. Task deadlines and
+work blocks stay separate: moving a work block leaves its task deadline unchanged.
+Use **Calendar sources** to show imported or live appointments; setup stays in
+Settings. The screenshot below shows Month.
 
 ![Tasks Calendar View](Assets/calendar.png)
 
 ### Reflective Journaling — Calendar & Mood History
 Month overview of journal entries with mood and energy indicators to visualize consistency and emotional trajectory over time.
 
+**Saved locally** confirms the journal database write. If saving fails, keep the
+entry open and choose **Retry local save** to save the current text and ratings.
+Open **Save and search details** to check keyword and semantic indexing separately;
+**Retry indexing** rebuilds search from the saved entry. AI review progress is
+shown beside the review controls, and streamed feedback remains a preview until
+the review finishes. A saved review is a snapshot; rerun it after later edits.
+
+Calendar publication has its own queue and acknowledgement in **Settings → Calendar
+synchronization**. A current read-only mirror in **Calendar sources** describes the
+last confirmed check, rather than confirming that local work blocks were published.
+
 ![Journal Calendar View](Assets/journal2.png)
 
 ### Second Brain — Hybrid Search & AI Q&A
 Natural-language Q&A and semantic search across personal journals combining SQLite FTS5 and sqlite-vec embeddings, with citations linked to source entries.
 
+Q&A questions accept up to 4,000 Unicode code points, including surrounding whitespace. Longer questions receive a validation error so you can shorten them instead of having them silently truncated.
+
 ![Second Brain Q&A](Assets/sb.png)
 
 ### Insights & Telemetry Dashboard
 Telemetry dashboard featuring deterministic daily score trends, completion rates, deep work hours, mood charts, and habit streaks.
+
+#### Score display
+
+Choose **Settings → Appearance → Score display → Reflection-first** to hide
+numeric scores, score charts and score trends in Journal and Insights. Mood,
+energy, focus time, task/habit activity, written reflections and suggested actions
+remain available. The preference is saved on this device. Reviews still run and
+save scores; written reflections and search excerpts may still mention numbers.
+Choose **Show scores** to restore the scoring displays.
+
+Full task, focus and habit components contribute 40 + 35 + 15 = **90 points**
+before the AI nudge. An AI review can add or subtract up to 10 points, with the
+final score kept between 0 and 100. Open **How scoring works** in Journal or
+Insights for the component rules.
+
+Journal's day score recalculates from current activity and your current focus
+target, including the latest saved AI nudge. Its separate saved review value is a
+snapshot. Insights uses saved review scores for reviewed days and live calculations
+for other days; weekly/monthly score trends use saved summaries. Rerun a review
+to update its snapshot after activity or target changes.
 
 Historical planned-task counts exclude tasks created after the report day ended
 (midnight UTC), even when their deadlines are backdated. Live counts use current
@@ -88,17 +154,20 @@ Habit completion rates use the last 30 days, including today.
 
 ## Layout
 
+For implemented architecture, see the [root reference](plan.md). For API and
+recovery operations, see the [backend guide](backend/README.md).
+
 ```
 backend/    FastAPI + SQLite (WAL) + FTS5 + sqlite-vec + PydanticAI agents
-frontend/   React 19 + Vite + Tailwind v4 + shadcn/Base-UI + TipTap + Tauri v2 shell
+frontend/   React 19 + Vite + Tailwind v4 + shadcn v4/Base UI + TipTap v3 + Tauri v2 shell
 systemd/    retirement script for legacy HTTP rollup timers
 setup.sh    install backend + frontend dependencies (once per clone)
 dev.sh      launch backend + frontend for development (see Quick start)
 ```
 
-The desktop shell is a webview over the local API, so start the backend first
-(`./dev.sh`, or `cd backend && uv run uvicorn app.main:app`) — the app expects
-it on `http://127.0.0.1:8000`.
+In development, the desktop shell uses a separately started backend at
+`http://127.0.0.1:8000` (`./dev.sh` starts it alongside Vite). Packaged builds
+start their bundled backend on a random loopback port; no separate server is needed.
 
 ## Install (Linux releases)
 
@@ -133,11 +202,11 @@ git clone <repo> && cd Journal
 ./dev.sh     # backend :8000 + frontend :5173; Ctrl-C stops both
 ```
 
-`dev.sh` refuses to start over an occupied port (kill the stale instance with
-`fuser -k <port>/tcp`) instead of letting Vite drift ports, and picks another
-pair with `BACKEND_PORT=8001 FRONTEND_PORT=5174 ./dev.sh`. Flags: `--backend` /
-`--frontend` for a single service. If a previous session left services behind:
-`pkill -f 'uvicorn app.main:app'; pkill -f 'node_modules/.bin/vite'`. The SQLite
+`dev.sh` refuses to start over an occupied port instead of letting Vite drift
+ports. Inspect the owning process and stop the intended development instance, or
+choose another pair with `BACKEND_PORT=8001 FRONTEND_PORT=5174 ./dev.sh`. Flags:
+`--backend` / `--frontend` for a single service. The Tauri development shell still
+expects backend port 8000. The SQLite
 DB (`backend/data/journal.db`) and its schema are created on first backend
 start.
 
@@ -147,11 +216,12 @@ installers are idempotent.
 Manual equivalent:
 
 ```bash
-# 1. backend — API on :8000 (creates .venv from uv.lock; idempotent)
-cd backend && uv sync && uv run uvicorn app.main:app --reload
+# Run each command from the repository root in a separate terminal.
+# 1. backend, API on :8000
+(cd backend && uv sync --locked && uv run uvicorn app.main:app --reload)
 
-# 2. frontend — UI on :5173
-cd frontend && npm install && npm run dev
+# 2. frontend, UI on :5173
+(cd frontend && npm ci && npm run dev)
 ```
 
 Optional AI: point the app at any OpenAI-compatible endpoint (defaults to local
@@ -187,11 +257,12 @@ For local `.ics` files, use **Settings → Import calendar files**. Imports reta
 external appointments and recurring series in a read-only inventory, separate
 from tasks, work blocks and scores. Reimport into the same destination to update
 matching event identities; omitted records remain. In Calendar, choose an
-**Imported calendar** to show standalone appointments as a read-only overlay.
-Recurring occurrence expansion and reminders remain deferred. See the
+**Imported calendar** inside **Calendar sources** to show appointments and supported
+recurring occurrences as a read-only overlay across all six calendar modes.
+Unsupported series appear under **Outside the grid**. Reminders remain deferred. See the
 [calendar import guide](docs/calendar-import.md).
 
-For a connected CalDAV calendar, select **Live calendar** in Calendar to show
+For a connected CalDAV calendar, select **Live calendar** inside **Calendar sources** to show
 read-only mirrored appointments. Verify and enable the connection in Settings
 first. Last-check and stale-cache messages distinguish mirrored snapshots from
 current server availability; remote events never rewrite local tasks. See
@@ -214,9 +285,10 @@ Backups are snapshots, not live synchronization or portable Markdown/JSON export
 
 ### Restore a backup
 
-1. Finish saving your work, then **Quit** Meditations from its tray menu. Closing
-   the window alone is not enough. Stop any standalone backend using the target
-   database too.
+1. Finish saving your work, then exit Meditations using **Quit** in the tray
+   menu or by closing its main window. The current shell requests sidecar cleanup
+   on exit; confirm no backend still owns the target database. Stop standalone
+   backends using that database too.
 2. From a source checkout, run the following from `backend/`, using the database
    location from the table above. Both paths are explicit; no running API is used.
 
@@ -251,6 +323,11 @@ The ownership lock prevents restore while an updated Journal backend is running.
 It is advisory: quit older app versions and all external SQLite tools yourself.
 Do not delete the `.lock` file to bypass a lock or manually remove WAL files.
 Restore is an offline command; there is no restore button in Settings.
+
+Release testers can use the [packaged desktop acceptance procedure](docs/desktop-acceptance.md)
+for disposable-profile startup, native backup dialogs, offline recovery, and
+isolated calendar credential checks. It distinguishes native UI acceptance from
+frozen-backend smoke coverage.
 
 ## Portable data export
 
@@ -374,30 +451,48 @@ Gotchas baked into this flow (see `AGENTS.md` for the full list):
 
 ## Testing
 
+Run from the repository root:
+
 ```bash
-cd backend  && uv run pytest        # backend suite (in-memory SQLite)
-cd frontend && npm run test         # vitest (quick-add parser, date helpers)
-cd frontend && npm run build        # tsc -b + vite build — must pass before commit
-cd frontend && npm run lint         # oxlint
+(cd backend && uv run pytest)
+(cd frontend && npm run test)
+(cd frontend && npm run build)
+(cd frontend && npm run lint)
 ```
+
+Endpoint tests use in-memory SQLite. Migration, backup, restore, locking, and WAL
+tests also use isolated temporary files; they do not open your journal database.
 
 ### Pull-request and branch CI
 
 `.github/workflows/ci.yml` runs on every branch push and pull request, and
-supports manual runs. Four independent checks use Ubuntu 24.04: **Backend tests**
-(Python 3.12, `uv sync --locked`) and **Frontend test**, **Frontend build**, and
-**Frontend lint** (Node 24, `npm ci`). Failed frontend checks do not cancel the
-other checks. Existing lint warnings remain visible; lint errors fail the check.
+supports manual runs. Five independent checks use Ubuntu 24.04: **Backend tests**
+(Python 3.12, `uv sync --locked`) and **Frontend test**, **Frontend build**,
+**Frontend lint**, and **Frontend timezones** (Node 24, `npm ci`). Failed frontend
+checks do not cancel the other checks. Lint errors fail the lint check.
+
+**Frontend timezones** runs `npm run test:timezones` in UTC, Asia/Kolkata,
+America/New_York, Pacific/Kiritimati, America/Sao_Paulo, Pacific/Apia, and
+Australia/Lord_Howe. It covers calendar ranges, projections, time grids, time
+edits, and mode switching, including Year and Multi-Week. A failing zone stops
+the runner and fails the check. Dedicated runner tests also verify nonzero exits,
+signal termination, and process-start errors. Run the same checks locally:
+
+```bash
+cd frontend
+node --test scripts/test-timezones.node-test.mjs
+npm run test:timezones
+```
 
 To block merges, a repository administrator must enable a branch ruleset or
-branch protection for the target branch and require all four check names above.
+branch protection for the target branch and require all five check names above.
 Select the checks after their first GitHub run. The workflow alone cannot enforce
 merge protection. No path filters skip required checks; release tags use the
 separate release workflow.
 
 ### Release validation
 
-`.github/workflows/release.yml` calls the same four checks for each release tag
+`.github/workflows/release.yml` calls the same five checks for each release tag
 and manual build. The Linux bundle job waits for all of them to pass. It builds
 the backend with Python 3.12 and the lockfile's `packaging` dependency group,
 then launches that frozen executable through `backend/scripts/smoke_sidecar.py`.

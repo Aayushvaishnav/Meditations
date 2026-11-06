@@ -13,24 +13,31 @@ sync when behavior changes.
 |---|---|
 | `backend/` | FastAPI + SQLite (WAL) + FTS5 + sqlite-vec + PydanticAI |
 | `backend/app/` | `models.py` (all tables), `scoring.py` (deterministic score), `telemetry.py` (day aggregation), `search.py` (hybrid FTS+vec), `agents.py` (LLM runners), `ai_factory.py` (model factory + retry/transport), `ai_usage.py` (token telemetry), `sse.py` (SSE framing), `recurrence.py`, `db.py` |
-| `backend/app/routers/` | One module per resource; `deps.py` holds `SessionDep` |
+| `backend/app/routers/` | One module per resource; `deps.py` holds `SessionDep`; AI HTTP adapters delegate to `app/ai_orchestration.py`, also used by the scheduler |
 | `frontend/src/` | React 19 + Vite + Tailwind v4 + shadcn v4 (Base UI) + TipTap v3 |
-| `frontend/src/hooks/api.ts` | ALL React Query hooks with optimistic updates |
+| `frontend/src/hooks/` | Domain hooks: `tasks.ts`, `journal.ts`, `ai.ts`, `calendar-imports.ts`; `api.ts` preserves public exports; calendar-inbound and webhook hooks retain dedicated modules |
 | `frontend/src/stores/` | Zustand: `ui.ts` (section/view/scope/theme), `timer.ts` (focus clock) |
-| `systemd/` | User-level timers for AI rollups |
+| `systemd/` | Retirement script for legacy HTTP timers; scheduling lives in `backend/app/review_scheduler.py` |
 
 ## Commands
 
-Run from `backend/` unless noted. Verify before every commit.
+Run these commands from the repository root. Verify before every commit.
+Dependency versions MUST follow manifests and lockfiles; dated QA reports record
+suite counts instead of this command reference.
 
 ```bash
-uv run pytest                                  # backend tests (88 as of 2026-09)
-uv run uvicorn app.main:app --reload           # API on :8000
-cd frontend && npm run test                    # vitest (9 tests)
-npm run build                                  # tsc -b + vite build; MUST pass before commit
-npm run dev                                    # UI on :5173
-npm run tauri dev | build                      # desktop shell (needs rust + webkit2gtk-4.1)
+(cd backend && uv run pytest)
+(cd backend && uv run uvicorn app.main:app --reload) # API on :8000
+(cd frontend && npm run test)
+(cd frontend && npm run build) # tsc -b + vite build; MUST pass before commit
+(cd frontend && npm run lint)
+(cd frontend && npm run test:timezones)
+(cd frontend && npm run dev) # UI on :5173
+(cd frontend && npm run tauri dev) # native prerequisites and frozen sidecar required
+(cd frontend && npm run tauri build)
 ```
+
+See [desktop setup](README.md#desktop-app-tauri-v2) for native build prerequisites.
 
 ## Git
 
@@ -103,7 +110,7 @@ npm run tauri dev | build                      # desktop shell (needs rust + web
 - **`create_agent_model()` with no arguments uses ENV defaults** — it cannot
   see the provider the user configured in Settings (app_settings rows).
   Request paths MUST build models via `load_ai_settings(session)` first
-  (routers/agents.py `_request_model`). Skipping this shipped once: the test
+  (`ai_orchestration.py` `_request_model`). Skipping this shipped once: the test
   button passed while every real feature dialed the env-default Ollama.
 - **tiptap v3**: StarterKit is one configurable class (no task lists — add
   `TaskList`/`TaskItem` from `@tiptap/extension-list`); markdown storage via
@@ -134,17 +141,25 @@ npm run tauri dev | build                      # desktop shell (needs rust + web
 
 ## Testing
 
-- Backend tests run in-memory (`sqlite+aiosqlite:///:memory:` + StaticPool via
-  the `client` fixture in `tests/conftest.py`); no file DB is touched.
+- Endpoint tests use in-memory SQLite (`sqlite+aiosqlite:///:memory:` +
+  StaticPool via `tests/conftest.py`). Migration, backup, restore, locking, and WAL
+  tests also use disposable file databases; tests MUST NOT open user databases.
 - Agent tests MUST NOT hit the network: monkeypatch the runner functions in
   `app/agents.py`, or pass pydantic-ai's `TestModel`. The semantic-search tests
   stub `embed_texts` — never initialize the real fastembed model in tests.
 - The Tauri Rust shell compiles via the vendored sysroot in `.tauri-sysroot/`
   (rustup toolchain + Fedora RPMs extracted with `.tauri-sysroot/extract.sh`).
-  Build with `RUSTUP_HOME=$PWD/.tauri-sysroot/rustup
-  CARGO_HOME=$PWD/.tauri-sysroot/cargo PATH=$PWD/.tauri-sysroot/cargo/bin:$PATH
-  PKG_CONFIG_PATH=$PWD/.tauri-sysroot/root/usr/lib64/pkgconfig:$PWD/.tauri-sysroot/root/usr/share/pkgconfig
-  npm run tauri build` from `frontend/`. The bundler needs `libappindicator`
+  Export sysroot paths from the repository root before changing directories:
+
+  ```bash
+  export RUSTUP_HOME="$PWD/.tauri-sysroot/rustup"
+  export CARGO_HOME="$PWD/.tauri-sysroot/cargo"
+  export PATH="$CARGO_HOME/bin:$PATH"
+  export PKG_CONFIG_PATH="$PWD/.tauri-sysroot/root/usr/lib64/pkgconfig:$PWD/.tauri-sysroot/root/usr/share/pkgconfig"
+  (cd frontend && npm run tauri build)
+  ```
+
+  The bundler needs `libappindicator`
   resolvable via pkg-config (`appindicator3-0.1` + `dbusmenu-glib-0.4` pc
   files) even for deb/rpm targets. For the AppImage, run
   `.tauri-sysroot/build-appimage.sh` afterwards: linuxdeploy can't see

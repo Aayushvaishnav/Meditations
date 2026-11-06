@@ -19,16 +19,26 @@ npm run build           # tsc -b + vite build
 
 ## Section loading
 
-The tasks shell loads immediately. Journal, Insights, Second Brain, and Settings
-load on first selection and reuse their loaded modules on later visits. During
-loading, the central pane announces the selected section while navigation,
-the timer, and the command palette stay available. Section navigation still
-unmounts the previous view and flushes pending journal saves.
+The List task view and shared shell load immediately. Matrix, Journal, Insights,
+Second Brain, and Settings load on first selection and reuse their loaded
+modules on later visits. Board and Calendar also load on demand, while the task
+header, filter, and quick-add controls stay mounted. API loading/error states
+take precedence over task-view loading. During section loading, the central
+pane announces the selected section while navigation, the timer, and the
+command palette stay available. Section navigation still unmounts the previous
+view and flushes pending journal saves.
 
 To inspect production chunks, run `npm run build -- --manifest` and read
 `dist/.vite/manifest.json`. Include each entry's recursive static `imports`
 when measuring initial JavaScript; dynamically imported sections are deferred.
-PERF-01 reduced that initial total from 1.40 MB to 818 KB minified (41.6%).
+PERF-01 historically reduced that initial total from 1.40 MB to 818 KB minified
+(41.6%). REV-13's later worktree comparison reduces initial JavaScript from
+885 KB to 773 KB (12.6%, including shared chunks), with no new dependency or
+manual chunk rules. This trades initial payload for first-use latency: five
+local Chromium samples show cold Board/Calendar medians increasing from
+281/180 ms to 497/448 ms. Startup changes from 708 to 687 ms and Journal remains
+480 ms; these unthrottled automation samples establish no reliable runtime or
+native performance gain. See root `plan.md` §6.0 for measurement scope.
 The remaining large-chunk build advisory is unchanged in configuration.
 
 ## Phase 2 scope
@@ -200,8 +210,10 @@ chips open read-only day details; no drag or task mutation is registered for the
 `lib/calendar-overlay.ts` owns local-day overlap and interval labels. The overlay
 hook in `hooks/api.ts` shares import invalidation, without task/telemetry changes.
 Date ends are exclusive, timed instants use local day boundaries, floating labels
-stay unconverted, and no-end timed records are points. Opaque series, cancellations,
-durations and unsafe intervals remain in an explicit outside-grid inventory.
+stay unconverted, and no-end timed records are points. Unsupported or over-limit
+series, durations and unsafe intervals remain in an explicit outside-grid inventory.
+Calendar requests bounded recurring occurrences for all six modes using the visible
+days plus one day of local/UTC boundary padding on each side.
 Files require reimport to refresh; this feature does not fetch live calendars.
 
 ### Live Calendar overlay
@@ -211,7 +223,10 @@ Calendar's initially Hidden **Live calendar** selector uses the independent
 selection does not change task filtering or telemetry. `calendar-live-overlay.tsx`
 shows paused/authentication/error stale-cache states, the last successful check,
 and unplaced item details. The overlay endpoint supplies reconciliation status
-alongside timed/floating/all-day intervals, with no occurrence expansion.
+alongside timed/floating/all-day intervals and supported recurring occurrences.
+Both overlay hooks include `start`/`end` windows in their independent cache keys;
+source selection survives range changes, while previous-window data is hidden
+during a new fetch. Calls without a window retain the legacy standalone projection.
 
 `hooks/calendar-inbound.ts` owns 10-second cache polling and app-wide resume
 signaling. Focus and return-to-visible events share an active reconciliation

@@ -6,7 +6,7 @@ import pytest
 
 from app import agents, db, search
 from app.models import MonthlySummary, WeeklySummary
-from app.routers import agents as agent_routes
+from app import ai_orchestration as agent_routes
 
 
 @pytest.fixture(autouse=True)

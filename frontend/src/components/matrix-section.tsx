@@ -1,3 +1,5 @@
+import { BulkTasksProvider, BulkTaskToolbar } from "@/components/bulk-tasks"
+import { selectMatrixTasks } from "@/lib/eisenhower"
 import { useLists, useTasks } from "@/hooks/api"
 import { useUi } from "@/stores/ui"
 import { EisenhowerMatrix } from "@/components/eisenhower-matrix"
@@ -13,7 +15,11 @@ export function MatrixSection() {
       <Header />
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <TaskQueryBoundary query={query}>
-          {tasks => <EisenhowerMatrix tasks={tasks} lists={lists.data ?? []} scope={{ kind: "smart", id: "all" }} search={search} />}
+          {tasks => <BulkTasksProvider key={search} tasks={tasks} lists={lists.data ?? []}
+            eligible={selectMatrixTasks(tasks, { kind: "smart", id: "all" }, search)}>
+            <BulkTaskToolbar />
+            <EisenhowerMatrix tasks={tasks} lists={lists.data ?? []} scope={{ kind: "smart", id: "all" }} search={search} />
+          </BulkTasksProvider>}
         </TaskQueryBoundary>
       </div>
     </main>

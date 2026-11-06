@@ -11,7 +11,7 @@ from sqlmodel import select
 
 from app import agents, db, main, review_scheduler
 from app.models import DailyScore, JournalEntry, MonthlySummary, ReviewJob, WeeklySummary
-from app.routers import agents as routes
+from app import ai_orchestration as routes
 
 
 DAY = date(2026, 1, 12)

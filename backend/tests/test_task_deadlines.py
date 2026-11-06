@@ -218,7 +218,7 @@ def test_date_export_and_offline_backup_restore(client, tmp_path):
 
 def test_briefing_calendar_dates_and_statuses(client, monkeypatch):
     from app import agents
-    from app.routers import agents as router
+    from app import ai_orchestration as router
 
     monkeypatch.setattr(router, 'utc_now', lambda: datetime(2026, 11, 2, 12))
     for title, label, status in [
@@ -229,8 +229,9 @@ def test_briefing_calendar_dates_and_statuses(client, monkeypatch):
         client.post('/api/tasks', json={'title': title, 'status': status, 'deadline': {'kind': 'date', 'date': label}})
 
     async def fake(deps, **kwargs):
-        assert deps['overdue_tasks'] == ['overdue (due 2026-11-01)']
-        assert deps['due_today'] == ['today']
+        assert [(task['title'], task['deadline_date']) for task in deps['overdue_tasks']] == [('overdue', '2026-11-01')]
+        assert [task['title'] for task in deps['due_today']] == ['today']
+        assert all(task['id'] for key in ('overdue_tasks', 'due_today') for task in deps[key])
         assert deps['open_tasks_total'] == 3
         return agents.BriefingOutput(top_focus=['today'], reasoning='calendar')
 

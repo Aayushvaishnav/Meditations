@@ -8,7 +8,7 @@ from sqlmodel import select
 
 from app import agents, db, review_scheduler
 from app.models import JournalEntry, MonthlySummary, WeeklySummary
-from app.routers import agents as routes
+from app import ai_orchestration as routes
 
 
 @pytest.fixture

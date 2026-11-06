@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Coffee, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useBriefingStream } from "@/hooks/api"
+import { RecommendationTaskActions } from "./recommendations/task-actions"
 
 /** Conversational daily planning brief (plan §6.3.3): Top 3 focus for today. */
 export function BriefingCard() {
@@ -53,13 +54,16 @@ export function BriefingCard() {
           )
         ) : data ? (
           <div className="mt-3">
-            <ol className="space-y-1.5">
-              {data.top_focus.map((item, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
+            <ol className="space-y-3">
+              {(data.recommendations?.length ? data.recommendations : (data.top_focus ?? []).map(text => ({ text, task_id: null }))).map((item, i) => (
+                <li key={`${i}:${item.task_id ?? "general"}`} className="flex items-start gap-2 text-sm">
                   <span className="mt-0.5 flex size-4.5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-semibold text-primary">
                     {i + 1}
                   </span>
-                  {item}
+                  <div className="min-w-0 flex-1 break-words">
+                    <p>{item.text}</p>
+                    {briefing.status === "complete" && item.task_id && <RecommendationTaskActions taskId={item.task_id} />}
+                  </div>
                 </li>
               ))}
             </ol>
@@ -75,7 +79,10 @@ export function BriefingCard() {
             </span>
           </div>
         )}
-        {briefing.error && <p className="mt-2 text-xs text-destructive">Briefing failed: {briefing.error}</p>}
+        {briefing.error && <div className="mt-2 space-y-2">
+          <p role="alert" className="text-xs text-destructive">Briefing failed: {briefing.error}</p>
+          <Button variant="outline" size="sm" disabled={briefing.pending} onClick={() => briefing.generate()}>Retry briefing</Button>
+        </div>}
       </div>
     </div>
   )

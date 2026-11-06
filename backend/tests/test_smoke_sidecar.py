@@ -20,10 +20,35 @@ def fake_sidecar(tmp_path):
         script = tmp_path / "sidecar"
         record = tmp_path / "record"
         script.write_text(f"#!{sys.executable}\n" + f"MODE={mode!r}\nRECORD={str(record)!r}\n" + r'''
-import json, os, signal, time
+import json, os, signal, time, sqlite3, sys, shutil
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 root = Path.cwd()
+if len(sys.argv) > 1:
+    info = json.loads(Path(RECORD).read_text())
+    try:
+        os.kill(info['pid'], 0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise SystemExit('server still running during restore')
+    if MODE == 'restore-error':
+        print('vec0.so: cannot open shared object file', flush=True)
+        raise SystemExit(17)
+    target = Path(sys.argv[4])
+    assert sys.argv[1] == 'restore' and sys.argv[3] == '--database'
+    assert target != Path(info['env']['JOURNAL_DB_PATH'])
+    assert os.environ['JOURNAL_DB_PATH'] == str(target)
+    shutil.copyfile(sys.argv[2], target)
+    if MODE == 'restore-empty':
+        with sqlite3.connect(target) as connection:
+            connection.execute('DELETE FROM tasks')
+    if MODE == 'restore-orphan':
+        with sqlite3.connect(target) as connection:
+            connection.execute('DELETE FROM lists')
+    if MODE == 'restore-corrupt':
+        target.write_bytes(b'not SQLite')
+    raise SystemExit(0)
 keys = ('HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME',
         'XDG_STATE_HOME', 'HF_HOME', 'JOURNAL_DB_PATH', 'MEDITATIONS_PORT',
         'MEDITATIONS_HOST', 'HF_HUB_OFFLINE', 'JOURNAL_SCHEDULED_REVIEWS')
@@ -46,6 +71,21 @@ class Handler(BaseHTTPRequestHandler):
         method = self.command
         status = 200
         data = {}
+        if path == '/api/backup' and method == 'POST':
+            backup = root / 'download.db'
+            with sqlite3.connect(backup) as connection:
+                connection.execute('CREATE TABLE lists (id TEXT PRIMARY KEY, name TEXT)')
+                connection.execute('CREATE TABLE tasks (id TEXT, title TEXT, list_id TEXT REFERENCES lists(id))')
+                for key, obj in objects.items():
+                    if key.startswith('/api/lists/'):
+                        connection.execute('INSERT INTO lists VALUES (?, ?)', (obj['id'], obj['name']))
+                    else:
+                        connection.execute('INSERT INTO tasks VALUES (?, ?, ?)',
+                                           (obj['id'], obj['title'], obj['list_id']))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(backup.read_bytes())
+            return
         if path == '/api/health':
             data = {'status': 'bad' if MODE == 'health' else 'ok'}
         elif method == 'POST':

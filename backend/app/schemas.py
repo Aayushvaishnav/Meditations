@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from datetime import date as Date
 from datetime import datetime
 from typing import Annotated, Literal
@@ -12,6 +14,7 @@ from app.recurrence import TaskRule
 from app.util import normalize_dt
 from app.task_deadlines import Deadline, DeadlineInput, NoDeadline, deadline_value
 from app.models import TaskFields
+from app.scoring import DailyMetrics
 
 TaskStatus = Literal["todo", "in_progress", "completed", "canceled"]
 FocusType = Literal["pomodoro", "stopwatch"]
@@ -159,3 +162,30 @@ class TaskResponse(TaskFields):
     @property
     def deadline(self) -> Deadline:
         return deadline_value(self.due_date, self.deadline_date)
+
+
+class DailyScoreResponse(SQLModel):
+    date: Date
+    task_score: float
+    focus_score: float
+    habit_score: float
+    weighted_score: float
+    llm_nudge: float
+    final_score: float
+    target_deep_work_hours: float
+    metrics: DailyMetrics
+    score_basis: Literal["live", "review_snapshot"] = "live"
+    saved_review_score: float | None = None
+    persisted: bool = False
+    feedback: str | None = None
+    insight: str | None = None
+    suggested_action_for_tomorrow: str = ""
+
+
+def saved_review_action(rubric_json: str) -> str:
+    try:
+        rubric = json.loads(rubric_json)
+    except (ValueError, TypeError):
+        return ""
+    action = rubric.get("suggested_action_for_tomorrow") if isinstance(rubric, dict) else None
+    return action if isinstance(action, str) else ""

@@ -1,3 +1,4 @@
+import { calendarOverlayWindow } from "@/lib/calendar-overlay-window"
 import { CalendarSources } from "./calendar-sources"
 import { useMemo, useState } from "react"
 import {
@@ -51,6 +52,7 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
   const [weekCount, setWeekCount] = useState(2)
   const setMode = useUi(state => state.setCalendarMode)
   const range = useMemo(() => calendarRange(cursor, mode, dayCount, weekCount), [cursor, mode, dayCount, weekCount])
+  const overlayWindow = useMemo(() => calendarOverlayWindow(range.days), [range])
   const [openDay, setOpenDay] = useState<Date | null>(null)
   const [newTitle, setNewTitle] = useState("")
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
@@ -95,8 +97,8 @@ export function CalendarView({ tasks: allTasks, scope, search }: { tasks: Task[]
 
 
   return (
-    <CalendarImportedOverlay inlineControls={false}>{(imported, importedControls, importedSummary) =>
-    <CalendarLiveOverlay inlineControls={false}>{(live, _unplacedCount, liveControls, liveSummary) =>
+    <CalendarImportedOverlay inlineControls={false} window={overlayWindow}>{(imported, importedControls, importedSummary) =>
+    <CalendarLiveOverlay inlineControls={false} window={overlayWindow}>{(live, _unplacedCount, liveControls, liveSummary) =>
     <div className="px-6 pb-8">
       <CalendarToolbar anchor={cursor} mode={mode} onMode={setMode} dayCount={dayCount} onDayCount={setDayCount} weekCount={weekCount} onWeekCount={setWeekCount} onNavigate={direction => setCursor(navigateCalendar(cursor, mode, direction, dayCount, weekCount))} onToday={() => setCursor(new Date())} />
       <CalendarSources summary={`${importedSummary} · ${liveSummary}`}>{importedControls}{liveControls}</CalendarSources>

@@ -7,12 +7,15 @@ const tests = [
   "src/lib/dates.test.ts",
   "src/lib/parsing.test.ts",
   "src/lib/task-filter.test.ts",
+  "src/lib/task-selection.test.ts",
   "src/components/kanban-board.test.tsx",
+  "src/components/cross-feature-contracts.test.tsx",
   "src/lib/eisenhower.test.ts",
   "src/lib/task-deadlines.test.ts",
   "src/lib/time-blocks.test.ts",
   "src/lib/calendar-overlay.test.ts",
   "src/lib/calendar-range.test.ts",
+  "src/lib/calendar-overlay-window.test.ts",
   "src/lib/calendar-projection.test.ts",
   "src/lib/calendar-time-grid.test.ts",
   "src/lib/calendar-time-edit.test.ts",
@@ -31,6 +34,8 @@ const tests = [
   "src/components/header.test.tsx",
   "src/stores/timer.test.ts",
   "src/components/focus-timer.test.tsx",
+  "src/components/recommendations/task-actions.test.tsx",
+  "src/components/recommendations/review-task-draft.test.tsx",
 ]
 for (const timezone of ["UTC", "Asia/Kolkata", "America/New_York", "Pacific/Kiritimati", "America/Sao_Paulo", "Pacific/Apia", "Australia/Lord_Howe"]) {
   console.log(`\nTimezone: ${timezone}`)

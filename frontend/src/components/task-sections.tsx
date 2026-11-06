@@ -2,11 +2,11 @@ import { useMemo } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import { Inbox, PartyPopper, SearchX } from "lucide-react"
 import type { Task, TaskList } from "@/api/types"
-import { GROUP_LABELS, groupOf, sortTasks, type TaskGroup } from "@/lib/dates"
+import { GROUP_LABELS } from "@/lib/dates"
 import { useUi, type SmartView } from "@/stores/ui"
 import { Button } from "@/components/ui/button"
 import { TaskItem } from "@/components/task-item"
-import { selectScopedTasks, TASK_GROUPS_BY_SCOPE } from "@/lib/task-filter"
+import { taskSections } from "@/lib/task-sections"
 
 const EMPTY_MESSAGES: Record<string, string> = {
   today: "Nothing due today. Enjoy the calm.",
@@ -28,33 +28,7 @@ export function TaskSections({
   search: string
   lists: TaskList[]
 }) {
-  const { sections, hasAny, visible } = useMemo(() => {
-    const visible = selectScopedTasks(tasks, scope, search)
-    const byId = new Map(visible.map((t) => [t.id, t]))
-
-    const grouped = new Map<TaskGroup, Task[]>()
-    for (const t of visible) {
-      // top-level only in sections; subtasks render nested under their parent
-      if (t.parent_id !== null && byId.has(t.parent_id)) continue
-      const g = groupOf(t)
-      const bucket = grouped.get(g) ?? []
-      bucket.push(t)
-      grouped.set(g, bucket)
-    }
-    for (const bucket of grouped.values()) bucket.sort(sortTasks)
-
-    const sections = TASK_GROUPS_BY_SCOPE[scope.kind === "list" ? "list" : scope.id]
-      .map((g) => ({ group: g, tasks: grouped.get(g) ?? [] }))
-      .filter((s) => s.tasks.length > 0)
-
-    // cap the completed backlog
-    for (const s of sections) {
-      if (s.group === "completed") s.tasks = s.tasks.sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? "")).slice(0, 20)
-    }
-
-    const hasAny = visible.length > 0
-    return { sections, hasAny, visible }
-  }, [tasks, scope, search])
+  const { sections, hasAny, visible } = useMemo(() => taskSections(tasks, scope, search), [tasks, scope, search])
 
   if (!hasAny) {
     if (search) {

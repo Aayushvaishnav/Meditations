@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest"
 import type { Task } from "@/api/types"
 import App from "./App"
@@ -25,12 +25,13 @@ vi.mock("@/components/kanban-board", () => ({ KanbanBoard: () => null }))
 vi.mock("@/components/task-sections", () => ({ TaskSections: () => null }))
 afterEach(() => { cleanup(); useUi.setState(useUi.getInitialState()); localStorage.clear() })
 
-it.each(["list", "board", "calendar"] as const)("loads Matrix independently of the %s task view with retry support", (view) => {
+it.each(["list", "board", "calendar"] as const)("loads Matrix independently of the %s task view with retry support", async (view) => {
   useUi.setState({ section: "matrix", view, scope: { kind: "smart", id: "completed" } })
   query.refetch.mockClear()
   query.data = []
   query.isLoading = true; query.isError = false
-  const mounted = render(<App />)
+  let mounted!: ReturnType<typeof render>
+  await act(async () => { mounted = render(<App />); await import("@/components/matrix-section") })
   expect(screen.getByLabelText("Loading tasks").getAttribute("aria-busy")).toBe("true")
   expect(screen.queryByRole("region", { name: "Unclassified" })).toBeNull()
   query.isLoading = false; query.isError = true
@@ -57,13 +58,13 @@ it.each([
   { kind: "smart", id: "today" },
   { kind: "smart", id: "completed" },
   { kind: "list", id: "work" },
-] as const)("shows all active tasks regardless of saved scope $kind/$id, while applying search", (scope) => {
+] as const)("shows all active tasks regardless of saved scope $kind/$id, while applying search", async (scope) => {
   useUi.setState({ section: "matrix", view: "calendar", scope, search: "review" })
   query.isLoading = false; query.isError = false
   query.data = [task("review other list"), task("review in progress", { status: "in_progress" }),
     task("review child", { parent_id: "parent" }), task("review completed", { status: "completed" }),
     task("review canceled", { status: "canceled" }), task("unrelated")]
-  render(<App />)
+  await act(async () => { render(<App />); await import("@/components/matrix-section") })
   expect(screen.getAllByRole("article").map(card => card.getAttribute("aria-label"))).toEqual(
     expect.arrayContaining(["review other list", "review in progress", "review child"]),
   )
