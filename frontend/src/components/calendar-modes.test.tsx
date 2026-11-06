@@ -31,10 +31,10 @@ function block(id: string, owner: string, start: string, end: string): TimeBlock
   return { id, task_id: owner, kind: "all_day", start_date: start, end_date: end, start_at: null, end_at: null, timezone: null,
     created_at: "2026-03-01T00:00:00", updated_at: "2026-03-01T00:00:00" }
 }
-function mode(value: "month" | "agenda" | "week" | "multi-day" | "year" | "multi-week") { fireEvent.change(screen.getByRole("combobox", { name: "Calendar mode" }), { target: { value } }) }
+function mode(value: "month" | "agenda" | "week" | "multi-day" | "year" | "multi-week") { fireEvent.change(screen.getByLabelText("Calendar mode"), { target: { value } }) }
 function view(tasks: Task[] = []) { return <CalendarView tasks={tasks} scope={useUi.getState().scope} search={useUi.getState().search} /> }
 function days() { return screen.getAllByRole("button", { name: /^Add task on / }).map(button => button.getAttribute("aria-label") ?? button.textContent) }
-function sources() { fireEvent.click(screen.getByRole("button", { name: "Calendar sources" })) }
+function sources() { fireEvent.click(screen.getByText("Calendar sources", { selector: "button" })) }
 function selectSources() {
   sources()
   fireEvent.change(screen.getByLabelText("Imported calendar"), { target: { value: "import" } })
@@ -194,7 +194,7 @@ describe("CAL-02 calendar modes", () => {
     render(view(tasks))
     selectSources()
     mode("agenda")
-    fireEvent.click(screen.getByRole("button", { name: "Export work blocks" }))
+    fireEvent.click(screen.getByText("Export work blocks", { selector: "button" }))
     const panel = within(screen.getByRole("region", { name: "Calendar export" }))
     expect(panel.getAllByRole("checkbox")).toHaveLength(2)
     for (const checkbox of panel.getAllByRole("checkbox")) fireEvent.click(checkbox)
@@ -246,7 +246,7 @@ describe("CAL-03 time-grid integration", () => {
     render(view([task("Planning")]))
     selectSources()
     mode("multi-day")
-    fireEvent.click(screen.getByRole("button", { name: "Export work blocks" }))
+    fireEvent.click(screen.getByText("Export work blocks", { selector: "button" }))
     const panel = within(screen.getByRole("region", { name: "Calendar export" }))
     for (const checkbox of panel.getAllByRole("checkbox")) fireEvent.click(checkbox)
     fireEvent.click(panel.getByRole("button", { name: "Download .ics" }))
@@ -260,9 +260,9 @@ describe("CAL-04 annual and Multi-Week integration", () => {
     mocks.blocks = [block("planned", "Planning", "2026-03-08", "2026-03-10"), block("hidden", "Home plan", "2026-03-08", "2026-03-09")]
     render(view([task("Planning"), task("Tagged", { tags: ["PLAN"] }), task("Home plan", { list_id: "home" }), task("Unrelated")]))
     mode("year")
-    expect(screen.getByRole("button", { name: "2026-03-08, 3 items: 2 task deadlines, 1 work blocks, 0 imported events, 0 live events" })).toBeTruthy()
+    expect(within(screen.getByRole("region", { name: "March 2026" })).getByRole("button", { name: "2026-03-08, 3 items: 2 task deadlines, 1 work blocks, 0 imported events, 0 live events" })).toBeTruthy()
     selectSources()
-    fireEvent.click(screen.getByRole("button", { name: "2026-03-08, 5 items: 2 task deadlines, 1 work blocks, 1 imported events, 1 live events" }))
+    fireEvent.click(within(screen.getByRole("region", { name: "March 2026" })).getByRole("button", { name: "2026-03-08, 5 items: 2 task deadlines, 1 work blocks, 1 imported events, 1 live events" }))
     const dialog = within(screen.getByRole("dialog"))
     expect(dialog.getByText("5 items: 2 task deadlines, 1 work blocks, 1 imported events, 1 live events")).toBeTruthy()
     for (const title of ["Planning", "Tagged", "Dentist", "Remote meeting"]) expect(dialog.getAllByText(title).length).toBeGreaterThan(0)
@@ -270,7 +270,7 @@ describe("CAL-04 annual and Multi-Week integration", () => {
     expect(dialog.queryByText("Unrelated")).toBeNull()
     expect(dialog.getAllByText(/Read-only/)).toHaveLength(2)
     fireEvent.click(dialog.getByRole("button", { name: "Close" }))
-    expect(screen.getByRole("button", { name: "2026-03-09, 1 items: 0 task deadlines, 1 work blocks, 0 imported events, 0 live events" })).toBeTruthy()
+    expect(within(screen.getByRole("region", { name: "March 2026" })).getByRole("button", { name: "2026-03-09, 1 items: 0 task deadlines, 1 work blocks, 0 imported events, 0 live events" })).toBeTruthy()
     for (const target of ["multi-week", "month"] as const) {
       mode(target)
       expect(screen.getByText("Dentist")).toBeTruthy()
@@ -288,11 +288,11 @@ describe("CAL-04 annual and Multi-Week integration", () => {
   it("navigates years and drills the selected month down without losing its anchor", () => {
     render(view())
     mode("year")
-    fireEvent.click(screen.getByRole("button", { name: "Previous year" }))
+    fireEvent.click(screen.getByLabelText("Previous year"))
     expect(screen.getByRole("region", { name: "2025 year overview" })).toBeTruthy()
-    fireEvent.click(screen.getByRole("button", { name: "Next year" }))
+    fireEvent.click(screen.getByLabelText("Next year"))
     expect(screen.getByRole("region", { name: "2026 year overview" })).toBeTruthy()
-    fireEvent.click(screen.getByRole("button", { name: "Open March 2026 in Month" }))
+    fireEvent.click(within(screen.getByRole("region", { name: "March 2026" })).getByRole("button", { name: "Open March 2026 in Month" }))
     expect(useUi.getState().calendarMode).toBe("month")
     mode("agenda")
     expect(days()[0]).toBe("Add task on 2026-03-07")
@@ -326,7 +326,8 @@ describe("CAL-04 annual and Multi-Week integration", () => {
     useUi.setState({ scope: { kind: "list", id: "work" } })
     render(view())
     mode(target)
-    fireEvent.click(screen.getByRole("button", { name: target === "year" ? /^2026-03-08, 0 items:/ : "Add task on 2026-03-08" }))
+    const calendar = target === "year" ? within(screen.getByRole("region", { name: "March 2026" })) : screen
+    fireEvent.click(calendar.getByRole("button", { name: target === "year" ? /^2026-03-08, 0 items:/ : "Add task on 2026-03-08" }))
     const input = within(screen.getByRole("dialog")).getByLabelText("New task deadline")
     fireEvent.change(input, { target: { value: "New plan" } })
     fireEvent.keyDown(input, { key: "Enter" })
@@ -343,7 +344,7 @@ describe("CAL-04 annual and Multi-Week integration", () => {
     render(view([task("Planning"), task("Home plan", { list_id: "home" }), task("Unrelated")]))
     selectSources()
     mode(target)
-    fireEvent.click(screen.getByRole("button", { name: "Export work blocks" }))
+    fireEvent.click(screen.getByText("Export work blocks", { selector: "button" }))
     const panel = within(screen.getByRole("region", { name: "Calendar export" }))
     expect(panel.getAllByRole("checkbox")).toHaveLength(2)
     expect(panel.queryByText("Dentist")).toBeNull()
