@@ -2,63 +2,78 @@
   <img src="Assets/icon.png" alt="Meditations Icon" width="96" height="96" />
 </p>
 
-# Meditations — local-first life-OS
+# Meditations: local-first life-OS
 
-A single local app that combines **TickTick-grade task management**, **reflective
-journaling** (TipTap markdown), and a **hierarchical AI compaction system**
-(PydanticAI). Everything runs on your machine: SQLite storage, local-first API,
-optional AI against any OpenAI-compatible endpoint (defaults to a local Ollama).
+Plan your day, make space for focused work, and reflect on what matters.
+Meditations brings tasks, a calendar, Markdown journaling, and optional AI reviews
+into one local-first app. Your data stays in a local SQLite database. AI features
+use the provider you choose, including a local Ollama instance or an
+OpenAI-compatible endpoint.
 
 <p align="center">
-  <img src="Assets/journal1.png" alt="Meditations Journal & Daily Telemetry" />
+  <img src="Assets/journal1.png" alt="Journal editor, mood and energy ratings, and daily review in the Rosé Pine theme" />
 </p>
 
+## New in 0.2.1
+
+- **Plan with context:** six calendar modes, separate task deadlines and work
+  blocks, and read-only appointments from imported `.ics` files or a connected
+  CalDAV calendar. See [calendar imports](docs/calendar-import.md) and
+  [calendar synchronization](docs/calendar-sync.md).
+- **Organize in batches:** select tasks in List, Board, or Matrix, review list,
+  status, or tag changes, and retry only the tasks that failed.
+- **Turn reflection into action:** open, schedule, or focus on tasks from a
+  completed AI briefing, and draft a task from a saved daily review.
+- **Know what is saved:** check local journal saves, search indexing, and AI
+  review progress separately.
+- **Choose reflection-first:** keep written feedback and activity visible while
+  hiding numeric scores and score charts.
 
 ## Features
 
-- **Quick-add capture** — natural-language parsing: `buy milk tomorrow 5pm !1 #personal @errands ~10m`
+- **Quick-add capture**: parse natural-language input such as `buy milk tomorrow 5pm !1 #personal @errands ~10m`
   with chrono-node dates, `!1/!2/!3` priorities, `#lists`, `@tags`, `~durations`,
   and `every mon, wed` recurrence (RRULE subset).
-- **Task views** — list sections (Overdue / Today / Tomorrow / Upcoming / No date /
+- **Task views**: list sections (Overdue / Today / Tomorrow / Upcoming / No date /
   Completed), Kanban board with drag-and-drop, subtasks, inline rename, and
   recurring-task clones on completion. Calendar includes Year, Month, Week,
   Agenda, Multi-Day, and Multi-Week. The independent Matrix section uses explicit
   importance and urgency instead of inferring them from priority or deadlines.
-- **Journal** — one markdown entry per day with mood/energy ratings, tipTap editor,
+- **Journal**: one markdown entry per day with mood/energy ratings, TipTap editor,
   and a hard rule that a day is never auto-created empty.
-- **Hybrid search** — SQLite FTS5 (keyword) + sqlite-vec (semantic embeddings via
+- **Hybrid search**: SQLite FTS5 (keyword) + sqlite-vec (semantic embeddings via
   fastembed), with a distance cap so tiny indexes never over-match.
-- **AI reviews** — daily / weekly / monthly compaction agents with strictly bounded
+- **AI reviews**: daily / weekly / monthly compaction agents with strictly bounded
   context (the daily agent reads today + 6 past days + latest rollups; token cost
-  is O(1) regardless of history), plus daily briefing, capture assists, and Q&A —
+  is O(1) regardless of history), plus daily briefing, capture assists, and Q&A,
   with SSE for daily review, briefing, Q&A, and editor assists. Weekly/monthly
   reviews, capture, and decomposition use ordinary request responses.
-- **Daily score** — deterministic and never LLM-computed:
+- **Daily score**: deterministic and never LLM-computed:
   `0.40*task + 0.35*focus + 0.15*habit + clamp(llm_nudge, ±10)`; unconfigured
   components are neutral, never punitive.
 - **Optional outgoing webhooks**: Send selected time-block changes and task completions to a trusted workflow endpoint. Event/list scopes, optional title sharing, signed requests, durable retries, and delivery status live in Settings. This is independent of calendar sync; see the [workflow guide and local example](docs/webhooks.md).
-- **Desktop shell** — Tauri v2 with system tray (show/quit) and a
+- **Desktop shell**: Tauri v2 with system tray (show/quit) and a
   `Super+Shift+A` global shortcut that focuses the app from anywhere.
 
 ## Screenshots
 
-### Tasks — List View
-Natural-language capture, AI daily briefing ("Good morning — Top 3 for today"), priority flags, duration badges, and grouped sections (Overdue, Today, Upcoming).
+All screenshots use **Ayu** or **Rosé Pine**, with fictional demo tasks,
+appointments, and journal entries. Choose either theme in **Settings → Appearance**.
 
-After a briefing finishes, linked recommendations offer **Open task**, **Schedule**
+### Tasks: List and briefing actions
+
+Natural-language capture, priority flags, duration badges, grouped task sections,
+and a completed AI daily briefing in **Ayu**.
+
+After a briefing finishes, task-linked recommendations offer **Open task**, **Schedule**
 and **Start focus**. Scheduling creates a local work block and leaves the task's
 deadline unchanged. If another focus session is in progress, finish or reset it
 before switching tasks. General advice remains readable without a task link.
 
-In Journal, a saved daily review's follow-up offers **Draft task**. Edit its title
-and optional deadline, then choose **Create task** to confirm. Failed saves keep
-the draft for retry; drafts stay within the current review view rather than being
-saved automatically.
+![Task list and completed AI briefing with Open task, Schedule, and Start focus actions in Ayu](Assets/list.png)
 
-![Tasks List View](Assets/list.png)
-
-### Tasks — Kanban Board
-Drag-and-drop task status workflow across To Do, In Progress, and Done, with integrated Pomodoro and Stopwatch focus timer.
+### Tasks: Kanban Board
+Drag-and-drop task status workflow across To Do, In Progress, and Done, with integrated Pomodoro and Stopwatch focus timer. Shown in **Rosé Pine**.
 
 Choose a list or smart view in the sidebar to filter Board, then narrow it with
 Filter tasks. All tasks and custom lists keep their matching completed tasks in
@@ -66,7 +81,7 @@ Done. Today, Overdue, and Upcoming show active tasks; Completed shows Done only.
 Board shows top-level tasks, with up to 30 matching Done cards and a count of older
 completed tasks. Use List to work with subtasks.
 
-![Tasks Kanban Board](Assets/board.png)
+![Task workflow across To Do, In Progress, and Done columns in Rosé Pine](Assets/board.png)
 
 ### Organize several tasks
 
@@ -85,16 +100,37 @@ Successful edits stay saved if another task fails. Review the named errors and
 choose **Retry failed only** to confirm another attempt without repeating the
 successful changes. Use **Done selecting** or Escape to leave selection mode.
 
-### Tasks — Calendar View
+![Three selected tasks with an Add tag batch awaiting confirmation in Ayu](Assets/bulk-tasks-ayu.png)
+
+### Matrix: importance and urgency
+
+Use the independent **Matrix** section to organize tasks by explicit importance
+and urgency. Change these values on a card or move it between quadrants.
+Unassigned tasks stay available for sorting; priorities and deadlines remain
+separate. Shown in **Rosé Pine**.
+
+![Eisenhower Matrix with importance and urgency quadrants in Rosé Pine](Assets/matrix-rose-pine.png)
+
+### Tasks: Calendar and recurring appointments
 Choose Year, Month, Week, Agenda, Multi-Day, or Multi-Week. Task deadlines and
 work blocks stay separate: moving a work block leaves its task deadline unchanged.
 Use **Calendar sources** to show imported or live appointments; setup stays in
-Settings. The screenshot below shows Month.
+Settings. The **Ayu** screenshots show Month with recurring imported and live
+appointments alongside local deadlines and a work block. Imported and live
+appointments are read-only.
 
-![Tasks Calendar View](Assets/calendar.png)
+![Month calendar with separate task deadlines, work blocks, and read-only imported and live appointments in Ayu](Assets/calendar.png)
 
-### Reflective Journaling — Calendar & Mood History
-Month overview of journal entries with mood and energy indicators to visualize consistency and emotional trajectory over time.
+Expand **Calendar sources** to choose an imported calendar and a live calendar,
+and check when the remote mirror was last confirmed.
+
+![Expanded Calendar sources showing read-only imported appointments and the live mirror's last successful check in Ayu](Assets/calendar-sources-ayu.png)
+
+### Journal: save and search status
+
+Write in Markdown with formatting controls, selection tools, and slash commands.
+Record mood and energy alongside your entry. Local saving, search indexing, and
+AI review each have their own progress, shown here in **Rosé Pine**.
 
 **Saved locally** confirms the journal database write. If saving fails, keep the
 entry open and choose **Retry local save** to save the current text and ratings.
@@ -107,16 +143,35 @@ Calendar publication has its own queue and acknowledgement in **Settings → Cal
 synchronization**. A current read-only mirror in **Calendar sources** describes the
 last confirmed check, rather than confirming that local work blocks were published.
 
-![Journal Calendar View](Assets/journal2.png)
+![Expanded journal save and search details with keyword and semantic indexing status in Rosé Pine](Assets/journal-status-rose-pine.png)
 
-### Second Brain — Hybrid Search & AI Q&A
+### Journal: reflection and follow-up tasks
+
+Choose **Reflection-first** in Settings to read your review without a numeric
+score. Activity, written feedback, and suggested actions remain available.
+
+A saved daily review's follow-up offers **Draft task**. Edit its title and optional
+deadline, then choose **Create task** to confirm. Failed saves keep the draft for
+retry; drafts stay within the current review view instead of saving automatically.
+The **Ayu** screenshot shows the editable draft before task creation.
+
+![Reflection-first daily review with activity, written feedback, and an editable follow-up task draft in Ayu](Assets/reflection-ayu.png)
+
+### Journal: calendar and mood history
+
+Browse entries by date and see mood and energy patterns across the month.
+Shown in **Rosé Pine**.
+
+![Journal calendar and mood history in Rosé Pine](Assets/journal2.png)
+
+### Second Brain: hybrid search and AI Q&A
 Natural-language Q&A and semantic search across personal journals combining SQLite FTS5 and sqlite-vec embeddings, with citations linked to source entries.
 
 Q&A questions accept up to 4,000 Unicode code points, including surrounding whitespace. Longer questions receive a validation error so you can shorten them instead of having them silently truncated.
 
-![Second Brain Q&A](Assets/sb.png)
+![Second Brain answer with clickable journal citations in Rosé Pine](Assets/sb.png)
 
-### Insights & Telemetry Dashboard
+### Insights and telemetry
 Telemetry dashboard featuring deterministic daily score trends, completion rates, deep work hours, mood charts, and habit streaks.
 
 #### Score display
@@ -150,7 +205,7 @@ Journal entries with text, a mood rating, or an energy rating count toward your 
 A current streak can end today or yesterday; future dates are excluded.
 Habit completion rates use the last 30 days, including today.
 
-![Insights Dashboard](Assets/insights.png)
+![Insights with score trends, focus time, mood, and habit activity in Ayu](Assets/insights.png)
 
 ## Layout
 
